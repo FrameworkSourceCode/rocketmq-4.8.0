@@ -1,0 +1,210 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>PushConsumerImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">rocketmq-openmessaging 4.8.0</a> &gt; <a href="index.source.html" class="el_package">io.openmessaging.rocketmq.consumer</a> &gt; <span class="el_source">PushConsumerImpl.java</span></div><h1>PushConsumerImpl.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package io.openmessaging.rocketmq.consumer;
+
+import io.openmessaging.BytesMessage;
+import io.openmessaging.KeyValue;
+import io.openmessaging.OMS;
+import io.openmessaging.OMSBuiltinKeys;
+import io.openmessaging.consumer.MessageListener;
+import io.openmessaging.consumer.PushConsumer;
+import io.openmessaging.exception.OMSRuntimeException;
+import io.openmessaging.interceptor.ConsumerInterceptor;
+import io.openmessaging.rocketmq.config.ClientConfig;
+import io.openmessaging.rocketmq.domain.NonStandardKeys;
+import io.openmessaging.rocketmq.utils.BeanUtils;
+import io.openmessaging.rocketmq.utils.OMSUtil;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import org.apache.rocketmq.client.consumer.DefaultMQPushConsumer;
+import org.apache.rocketmq.client.consumer.listener.ConsumeConcurrentlyContext;
+import org.apache.rocketmq.client.consumer.listener.ConsumeConcurrentlyStatus;
+import org.apache.rocketmq.client.consumer.listener.MessageListenerConcurrently;
+import org.apache.rocketmq.client.exception.MQClientException;
+import org.apache.rocketmq.common.message.MessageExt;
+import org.apache.rocketmq.remoting.protocol.LanguageCode;
+
+public class PushConsumerImpl implements PushConsumer {
+    private final DefaultMQPushConsumer rocketmqPushConsumer;
+    private final KeyValue properties;
+<span class="fc" id="L47">    private boolean started = false;</span>
+<span class="fc" id="L48">    private final Map&lt;String, MessageListener&gt; subscribeTable = new ConcurrentHashMap&lt;&gt;();</span>
+    private final ClientConfig clientConfig;
+
+<span class="fc" id="L51">    public PushConsumerImpl(final KeyValue properties) {</span>
+<span class="fc" id="L52">        this.rocketmqPushConsumer = new DefaultMQPushConsumer();</span>
+<span class="fc" id="L53">        this.properties = properties;</span>
+<span class="fc" id="L54">        this.clientConfig = BeanUtils.populate(properties, ClientConfig.class);</span>
+
+<span class="pc bpc" id="L56" title="1 of 2 branches missed.">        if (&quot;true&quot;.equalsIgnoreCase(System.getenv(&quot;OMS_RMQ_DIRECT_NAME_SRV&quot;))) {</span>
+<span class="nc" id="L57">            String accessPoints = clientConfig.getAccessPoints();</span>
+<span class="nc bnc" id="L58" title="All 4 branches missed.">            if (accessPoints == null || accessPoints.isEmpty()) {</span>
+<span class="nc" id="L59">                throw new OMSRuntimeException(&quot;-1&quot;, &quot;OMS AccessPoints is null or empty.&quot;);</span>
+            }
+<span class="nc" id="L61">            this.rocketmqPushConsumer.setNamesrvAddr(accessPoints.replace(',', ';'));</span>
+        }
+
+<span class="fc" id="L64">        String consumerGroup = clientConfig.getConsumerId();</span>
+<span class="pc bpc" id="L65" title="2 of 4 branches missed.">        if (null == consumerGroup || consumerGroup.isEmpty()) {</span>
+<span class="nc" id="L66">            throw new OMSRuntimeException(&quot;-1&quot;, &quot;Consumer Group is necessary for RocketMQ, please set it.&quot;);</span>
+        }
+<span class="fc" id="L68">        this.rocketmqPushConsumer.setConsumerGroup(consumerGroup);</span>
+<span class="fc" id="L69">        this.rocketmqPushConsumer.setMaxReconsumeTimes(clientConfig.getRmqMaxRedeliveryTimes());</span>
+<span class="fc" id="L70">        this.rocketmqPushConsumer.setConsumeTimeout(clientConfig.getRmqMessageConsumeTimeout());</span>
+<span class="fc" id="L71">        this.rocketmqPushConsumer.setConsumeThreadMax(clientConfig.getRmqMaxConsumeThreadNums());</span>
+<span class="fc" id="L72">        this.rocketmqPushConsumer.setConsumeThreadMin(clientConfig.getRmqMinConsumeThreadNums());</span>
+
+<span class="fc" id="L74">        String consumerId = OMSUtil.buildInstanceName();</span>
+<span class="fc" id="L75">        this.rocketmqPushConsumer.setInstanceName(consumerId);</span>
+<span class="fc" id="L76">        properties.put(OMSBuiltinKeys.CONSUMER_ID, consumerId);</span>
+<span class="fc" id="L77">        this.rocketmqPushConsumer.setLanguage(LanguageCode.OMS);</span>
+
+<span class="fc" id="L79">        this.rocketmqPushConsumer.registerMessageListener(new MessageListenerImpl());</span>
+<span class="fc" id="L80">    }</span>
+
+    @Override
+    public KeyValue attributes() {
+<span class="nc" id="L84">        return properties;</span>
+    }
+
+    @Override
+    public void resume() {
+<span class="nc" id="L89">        this.rocketmqPushConsumer.resume();</span>
+<span class="nc" id="L90">    }</span>
+
+    @Override
+    public void suspend() {
+<span class="nc" id="L94">        this.rocketmqPushConsumer.suspend();</span>
+<span class="nc" id="L95">    }</span>
+
+    @Override
+    public void suspend(long timeout) {
+
+<span class="nc" id="L100">    }</span>
+
+    @Override
+    public boolean isSuspended() {
+<span class="nc" id="L104">        return this.rocketmqPushConsumer.getDefaultMQPushConsumerImpl().isPause();</span>
+    }
+
+    @Override
+    public PushConsumer attachQueue(final String queueName, final MessageListener listener) {
+<span class="fc" id="L109">        this.subscribeTable.put(queueName, listener);</span>
+        try {
+<span class="fc" id="L111">            this.rocketmqPushConsumer.subscribe(queueName, &quot;*&quot;);</span>
+<span class="nc" id="L112">        } catch (MQClientException e) {</span>
+<span class="nc" id="L113">            throw new OMSRuntimeException(&quot;-1&quot;, String.format(&quot;RocketMQ push consumer can't attach to %s.&quot;, queueName));</span>
+<span class="fc" id="L114">        }</span>
+<span class="fc" id="L115">        return this;</span>
+    }
+
+    @Override
+    public PushConsumer attachQueue(String queueName, MessageListener listener, KeyValue attributes) {
+<span class="nc" id="L120">        return this.attachQueue(queueName, listener);</span>
+    }
+
+    @Override
+    public PushConsumer detachQueue(String queueName) {
+<span class="nc" id="L125">        this.subscribeTable.remove(queueName);</span>
+        try {
+<span class="nc" id="L127">            this.rocketmqPushConsumer.unsubscribe(queueName);</span>
+<span class="nc" id="L128">        } catch (Exception e) {</span>
+<span class="nc" id="L129">            throw new OMSRuntimeException(&quot;-1&quot;, String.format(&quot;RocketMQ push consumer fails to unsubscribe topic: %s&quot;, queueName));</span>
+<span class="nc" id="L130">        }</span>
+<span class="nc" id="L131">        return null;</span>
+    }
+
+    @Override
+    public void addInterceptor(ConsumerInterceptor interceptor) {
+
+<span class="nc" id="L137">    }</span>
+
+    @Override
+    public void removeInterceptor(ConsumerInterceptor interceptor) {
+
+<span class="nc" id="L142">    }</span>
+
+    @Override
+    public synchronized void startup() {
+<span class="pc bpc" id="L146" title="1 of 2 branches missed.">        if (!started) {</span>
+            try {
+<span class="fc" id="L148">                this.rocketmqPushConsumer.start();</span>
+<span class="nc" id="L149">            } catch (MQClientException e) {</span>
+<span class="nc" id="L150">                throw new OMSRuntimeException(&quot;-1&quot;, e);</span>
+<span class="fc" id="L151">            }</span>
+        }
+<span class="fc" id="L153">        this.started = true;</span>
+<span class="fc" id="L154">    }</span>
+
+    @Override
+    public synchronized void shutdown() {
+<span class="nc bnc" id="L158" title="All 2 branches missed.">        if (this.started) {</span>
+<span class="nc" id="L159">            this.rocketmqPushConsumer.shutdown();</span>
+        }
+<span class="nc" id="L161">        this.started = false;</span>
+<span class="nc" id="L162">    }</span>
+
+<span class="fc" id="L164">    class MessageListenerImpl implements MessageListenerConcurrently {</span>
+
+        @Override
+        public ConsumeConcurrentlyStatus consumeMessage(List&lt;MessageExt&gt; rmqMsgList,
+            ConsumeConcurrentlyContext contextRMQ) {
+<span class="fc" id="L169">            MessageExt rmqMsg = rmqMsgList.get(0);</span>
+<span class="fc" id="L170">            BytesMessage omsMsg = OMSUtil.msgConvert(rmqMsg);</span>
+
+<span class="fc" id="L172">            MessageListener listener = PushConsumerImpl.this.subscribeTable.get(rmqMsg.getTopic());</span>
+
+<span class="pc bpc" id="L174" title="1 of 2 branches missed.">            if (listener == null) {</span>
+<span class="nc" id="L175">                throw new OMSRuntimeException(&quot;-1&quot;,</span>
+<span class="nc" id="L176">                    String.format(&quot;The topic/queue %s isn't attached to this consumer&quot;, rmqMsg.getTopic()));</span>
+            }
+
+<span class="fc" id="L179">            final KeyValue contextProperties = OMS.newKeyValue();</span>
+<span class="fc" id="L180">            final CountDownLatch sync = new CountDownLatch(1);</span>
+
+<span class="fc" id="L182">            contextProperties.put(NonStandardKeys.MESSAGE_CONSUME_STATUS, ConsumeConcurrentlyStatus.RECONSUME_LATER.name());</span>
+
+<span class="fc" id="L184">            MessageListener.Context context = new MessageListener.Context() {</span>
+                @Override
+                public KeyValue attributes() {
+<span class="nc" id="L187">                    return contextProperties;</span>
+                }
+
+                @Override
+                public void ack() {
+<span class="fc" id="L192">                    sync.countDown();</span>
+<span class="fc" id="L193">                    contextProperties.put(NonStandardKeys.MESSAGE_CONSUME_STATUS,</span>
+<span class="fc" id="L194">                        ConsumeConcurrentlyStatus.CONSUME_SUCCESS.name());</span>
+<span class="fc" id="L195">                }</span>
+            };
+<span class="fc" id="L197">            long begin = System.currentTimeMillis();</span>
+<span class="fc" id="L198">            listener.onReceived(omsMsg, context);</span>
+<span class="fc" id="L199">            long costs = System.currentTimeMillis() - begin;</span>
+<span class="fc" id="L200">            long timeoutMills = clientConfig.getRmqMessageConsumeTimeout() * 60 * 1000;</span>
+            try {
+<span class="fc" id="L202">                sync.await(Math.max(0, timeoutMills - costs), TimeUnit.MILLISECONDS);</span>
+<span class="nc" id="L203">            } catch (InterruptedException ignore) {</span>
+<span class="fc" id="L204">            }</span>
+
+<span class="fc" id="L206">            return ConsumeConcurrentlyStatus.valueOf(contextProperties.getString(NonStandardKeys.MESSAGE_CONSUME_STATUS));</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.5.201910111838</span></div></body></html>

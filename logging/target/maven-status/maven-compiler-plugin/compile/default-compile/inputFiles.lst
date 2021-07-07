@@ -1,0 +1,12 @@
+/Users/yangweixing/Desktop/github_open/rocketmq-all-4.8.0-source-release/logging/src/main/java/org/apache/rocketmq/logging/inner/Appender.java
+/Users/yangweixing/Desktop/github_open/rocketmq-all-4.8.0-source-release/logging/src/main/java/org/apache/rocketmq/logging/inner/LoggingBuilder.java
+/Users/yangweixing/Desktop/github_open/rocketmq-all-4.8.0-source-release/logging/src/main/java/org/apache/rocketmq/logging/inner/LoggingEvent.java
+/Users/yangweixing/Desktop/github_open/rocketmq-all-4.8.0-source-release/logging/src/main/java/org/apache/rocketmq/logging/InternalLoggerFactory.java
+/Users/yangweixing/Desktop/github_open/rocketmq-all-4.8.0-source-release/logging/src/main/java/org/apache/rocketmq/logging/InnerLoggerFactory.java
+/Users/yangweixing/Desktop/github_open/rocketmq-all-4.8.0-source-release/logging/src/main/java/org/apache/rocketmq/logging/inner/Layout.java
+/Users/yangweixing/Desktop/github_open/rocketmq-all-4.8.0-source-release/logging/src/main/java/org/apache/rocketmq/logging/inner/SysLogger.java
+/Users/yangweixing/Desktop/github_open/rocketmq-all-4.8.0-source-release/logging/src/main/java/org/apache/rocketmq/logging/package-info.java
+/Users/yangweixing/Desktop/github_open/rocketmq-all-4.8.0-source-release/logging/src/main/java/org/apache/rocketmq/logging/inner/Logger.java
+/Users/yangweixing/Desktop/github_open/rocketmq-all-4.8.0-source-release/logging/src/main/java/org/apache/rocketmq/logging/InternalLogger.java
+/Users/yangweixing/Desktop/github_open/rocketmq-all-4.8.0-source-release/logging/src/main/java/org/apache/rocketmq/logging/inner/Level.java
+/Users/yangweixing/Desktop/github_open/rocketmq-all-4.8.0-source-release/logging/src/main/java/org/apache/rocketmq/logging/Slf4jLoggerFactory.java

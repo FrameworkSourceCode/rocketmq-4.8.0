@@ -1,0 +1,1901 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>CommitLog.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">rocketmq-store 4.8.0</a> &gt; <a href="index.source.html" class="el_package">org.apache.rocketmq.store</a> &gt; <span class="el_source">CommitLog.java</span></div><h1>CommitLog.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.rocketmq.store;
+
+import java.net.Inet6Address;
+import java.net.InetSocketAddress;
+import java.nio.ByteBuffer;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+
+import org.apache.rocketmq.common.ServiceThread;
+import org.apache.rocketmq.common.UtilAll;
+import org.apache.rocketmq.common.constant.LoggerName;
+import org.apache.rocketmq.common.message.MessageAccessor;
+import org.apache.rocketmq.common.message.MessageConst;
+import org.apache.rocketmq.common.message.MessageDecoder;
+import org.apache.rocketmq.common.message.MessageExt;
+import org.apache.rocketmq.common.message.MessageExtBatch;
+import org.apache.rocketmq.common.sysflag.MessageSysFlag;
+import org.apache.rocketmq.common.topic.TopicValidator;
+import org.apache.rocketmq.logging.InternalLogger;
+import org.apache.rocketmq.logging.InternalLoggerFactory;
+import org.apache.rocketmq.store.config.BrokerRole;
+import org.apache.rocketmq.store.config.FlushDiskType;
+import org.apache.rocketmq.store.ha.HAService;
+import org.apache.rocketmq.store.schedule.ScheduleMessageService;
+
+/**
+ * Store all metadata downtime for recovery, data protection reliability
+ */
+public class CommitLog {
+    // Message's MAGIC CODE daa320a7
+    public final static int MESSAGE_MAGIC_CODE = -626843481;
+<span class="fc" id="L54">    protected static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.STORE_LOGGER_NAME);</span>
+    // End of file empty MAGIC CODE cbd43194
+    protected final static int BLANK_MAGIC_CODE = -875286124;
+    protected final MappedFileQueue mappedFileQueue;
+    protected final DefaultMessageStore defaultMessageStore;
+    private final FlushCommitLogService flushCommitLogService;
+
+    //If TransientStorePool enabled, we must flush message to FileChannel at fixed periods
+    private final FlushCommitLogService commitLogService;
+
+    private final AppendMessageCallback appendMessageCallback;
+    private final ThreadLocal&lt;MessageExtBatchEncoder&gt; batchEncoderThreadLocal;
+<span class="fc" id="L66">    protected HashMap&lt;String/* topic-queueid */, Long/* offset */&gt; topicQueueTable = new HashMap&lt;String, Long&gt;(1024);</span>
+<span class="fc" id="L67">    protected volatile long confirmOffset = -1L;</span>
+
+<span class="fc" id="L69">    private volatile long beginTimeInLock = 0;</span>
+
+    protected final PutMessageLock putMessageLock;
+
+<span class="fc" id="L73">    public CommitLog(final DefaultMessageStore defaultMessageStore) {</span>
+<span class="fc" id="L74">        this.mappedFileQueue = new MappedFileQueue(defaultMessageStore.getMessageStoreConfig().getStorePathCommitLog(),</span>
+<span class="fc" id="L75">            defaultMessageStore.getMessageStoreConfig().getMappedFileSizeCommitLog(), defaultMessageStore.getAllocateMappedFileService());</span>
+<span class="fc" id="L76">        this.defaultMessageStore = defaultMessageStore;</span>
+
+<span class="fc bfc" id="L78" title="All 2 branches covered.">        if (FlushDiskType.SYNC_FLUSH == defaultMessageStore.getMessageStoreConfig().getFlushDiskType()) {</span>
+<span class="fc" id="L79">            this.flushCommitLogService = new GroupCommitService();</span>
+        } else {
+<span class="fc" id="L81">            this.flushCommitLogService = new FlushRealTimeService();</span>
+        }
+
+<span class="fc" id="L84">        this.commitLogService = new CommitRealTimeService();</span>
+
+<span class="fc" id="L86">        this.appendMessageCallback = new DefaultAppendMessageCallback(defaultMessageStore.getMessageStoreConfig().getMaxMessageSize());</span>
+<span class="fc" id="L87">        batchEncoderThreadLocal = new ThreadLocal&lt;MessageExtBatchEncoder&gt;() {</span>
+            @Override
+            protected MessageExtBatchEncoder initialValue() {
+<span class="fc" id="L90">                return new MessageExtBatchEncoder(defaultMessageStore.getMessageStoreConfig().getMaxMessageSize());</span>
+            }
+        };
+<span class="pc bpc" id="L93" title="1 of 2 branches missed.">        this.putMessageLock = defaultMessageStore.getMessageStoreConfig().isUseReentrantLockWhenPutMessage() ? new PutMessageReentrantLock() : new PutMessageSpinLock();</span>
+
+<span class="fc" id="L95">    }</span>
+
+    public boolean load() {
+<span class="fc" id="L98">        boolean result = this.mappedFileQueue.load();</span>
+<span class="pc bpc" id="L99" title="1 of 2 branches missed.">        log.info(&quot;load commit log &quot; + (result ? &quot;OK&quot; : &quot;Failed&quot;));</span>
+<span class="fc" id="L100">        return result;</span>
+    }
+
+    public void start() {
+<span class="fc" id="L104">        this.flushCommitLogService.start();</span>
+
+<span class="pc bpc" id="L106" title="1 of 2 branches missed.">        if (defaultMessageStore.getMessageStoreConfig().isTransientStorePoolEnable()) {</span>
+<span class="nc" id="L107">            this.commitLogService.start();</span>
+        }
+<span class="fc" id="L109">    }</span>
+
+    public void shutdown() {
+<span class="pc bpc" id="L112" title="1 of 2 branches missed.">        if (defaultMessageStore.getMessageStoreConfig().isTransientStorePoolEnable()) {</span>
+<span class="nc" id="L113">            this.commitLogService.shutdown();</span>
+        }
+
+<span class="fc" id="L116">        this.flushCommitLogService.shutdown();</span>
+<span class="fc" id="L117">    }</span>
+
+    public long flush() {
+<span class="nc" id="L120">        this.mappedFileQueue.commit(0);</span>
+<span class="nc" id="L121">        this.mappedFileQueue.flush(0);</span>
+<span class="nc" id="L122">        return this.mappedFileQueue.getFlushedWhere();</span>
+    }
+
+    public long getMaxOffset() {
+<span class="fc" id="L126">        return this.mappedFileQueue.getMaxOffset();</span>
+    }
+
+    public long remainHowManyDataToCommit() {
+<span class="nc" id="L130">        return this.mappedFileQueue.remainHowManyDataToCommit();</span>
+    }
+
+    public long remainHowManyDataToFlush() {
+<span class="nc" id="L134">        return this.mappedFileQueue.remainHowManyDataToFlush();</span>
+    }
+
+    public int deleteExpiredFile(
+        final long expiredTime,
+        final int deleteFilesInterval,
+        final long intervalForcibly,
+        final boolean cleanImmediately
+    ) {
+<span class="fc" id="L143">        return this.mappedFileQueue.deleteExpiredFileByTime(expiredTime, deleteFilesInterval, intervalForcibly, cleanImmediately);</span>
+    }
+
+    /**
+     * Read CommitLog data, use data replication
+     */
+    public SelectMappedBufferResult getData(final long offset) {
+<span class="fc bfc" id="L150" title="All 2 branches covered.">        return this.getData(offset, offset == 0);</span>
+    }
+
+    public SelectMappedBufferResult getData(final long offset, final boolean returnFirstOnNotFound) {
+<span class="fc" id="L154">        int mappedFileSize = this.defaultMessageStore.getMessageStoreConfig().getMappedFileSizeCommitLog();</span>
+<span class="fc" id="L155">        MappedFile mappedFile = this.mappedFileQueue.findMappedFileByOffset(offset, returnFirstOnNotFound);</span>
+<span class="fc bfc" id="L156" title="All 2 branches covered.">        if (mappedFile != null) {</span>
+<span class="fc" id="L157">            int pos = (int) (offset % mappedFileSize);</span>
+<span class="fc" id="L158">            SelectMappedBufferResult result = mappedFile.selectMappedBuffer(pos);</span>
+<span class="fc" id="L159">            return result;</span>
+        }
+
+<span class="fc" id="L162">        return null;</span>
+    }
+
+    /**
+     * When the normal exit, data recovery, all memory data have been flush
+     */
+    public void recoverNormally(long maxPhyOffsetOfConsumeQueue) {
+<span class="fc" id="L169">        boolean checkCRCOnRecover = this.defaultMessageStore.getMessageStoreConfig().isCheckCRCOnRecover();</span>
+<span class="fc" id="L170">        final List&lt;MappedFile&gt; mappedFiles = this.mappedFileQueue.getMappedFiles();</span>
+<span class="fc bfc" id="L171" title="All 2 branches covered.">        if (!mappedFiles.isEmpty()) {</span>
+            // Began to recover from the last third file
+<span class="fc" id="L173">            int index = mappedFiles.size() - 3;</span>
+<span class="fc bfc" id="L174" title="All 2 branches covered.">            if (index &lt; 0)</span>
+<span class="fc" id="L175">                index = 0;</span>
+
+<span class="fc" id="L177">            MappedFile mappedFile = mappedFiles.get(index);</span>
+<span class="fc" id="L178">            ByteBuffer byteBuffer = mappedFile.sliceByteBuffer();</span>
+<span class="fc" id="L179">            long processOffset = mappedFile.getFileFromOffset();</span>
+<span class="fc" id="L180">            long mappedFileOffset = 0;</span>
+            while (true) {
+<span class="fc" id="L182">                DispatchRequest dispatchRequest = this.checkMessageAndReturnSize(byteBuffer, checkCRCOnRecover);</span>
+<span class="fc" id="L183">                int size = dispatchRequest.getMsgSize();</span>
+                // Normal data
+<span class="fc bfc" id="L185" title="All 4 branches covered.">                if (dispatchRequest.isSuccess() &amp;&amp; size &gt; 0) {</span>
+<span class="fc" id="L186">                    mappedFileOffset += size;</span>
+                }
+                // Come the end of the file, switch to the next file Since the
+                // return 0 representatives met last hole,
+                // this can not be included in truncate offset
+<span class="pc bpc" id="L191" title="1 of 4 branches missed.">                else if (dispatchRequest.isSuccess() &amp;&amp; size == 0) {</span>
+<span class="fc" id="L192">                    index++;</span>
+<span class="pc bpc" id="L193" title="1 of 2 branches missed.">                    if (index &gt;= mappedFiles.size()) {</span>
+                        // Current branch can not happen
+<span class="nc" id="L195">                        log.info(&quot;recover last 3 physics file over, last mapped file &quot; + mappedFile.getFileName());</span>
+<span class="nc" id="L196">                        break;</span>
+                    } else {
+<span class="fc" id="L198">                        mappedFile = mappedFiles.get(index);</span>
+<span class="fc" id="L199">                        byteBuffer = mappedFile.sliceByteBuffer();</span>
+<span class="fc" id="L200">                        processOffset = mappedFile.getFileFromOffset();</span>
+<span class="fc" id="L201">                        mappedFileOffset = 0;</span>
+<span class="fc" id="L202">                        log.info(&quot;recover next physics file, &quot; + mappedFile.getFileName());</span>
+                    }
+                }
+                // Intermediate file read error
+<span class="pc bpc" id="L206" title="1 of 2 branches missed.">                else if (!dispatchRequest.isSuccess()) {</span>
+<span class="fc" id="L207">                    log.info(&quot;recover physics file end, &quot; + mappedFile.getFileName());</span>
+<span class="fc" id="L208">                    break;</span>
+                }
+<span class="fc" id="L210">            }</span>
+
+<span class="fc" id="L212">            processOffset += mappedFileOffset;</span>
+<span class="fc" id="L213">            this.mappedFileQueue.setFlushedWhere(processOffset);</span>
+<span class="fc" id="L214">            this.mappedFileQueue.setCommittedWhere(processOffset);</span>
+<span class="fc" id="L215">            this.mappedFileQueue.truncateDirtyFiles(processOffset);</span>
+
+            // Clear ConsumeQueue redundant data
+<span class="fc bfc" id="L218" title="All 2 branches covered.">            if (maxPhyOffsetOfConsumeQueue &gt;= processOffset) {</span>
+<span class="fc" id="L219">                log.warn(&quot;maxPhyOffsetOfConsumeQueue({}) &gt;= processOffset({}), truncate dirty logic files&quot;, maxPhyOffsetOfConsumeQueue, processOffset);</span>
+<span class="fc" id="L220">                this.defaultMessageStore.truncateDirtyLogicFiles(processOffset);</span>
+            }
+<span class="fc" id="L222">        } else {</span>
+            // Commitlog case files are deleted
+<span class="fc" id="L224">            log.warn(&quot;The commitlog files are deleted, and delete the consume queue files&quot;);</span>
+<span class="fc" id="L225">            this.mappedFileQueue.setFlushedWhere(0);</span>
+<span class="fc" id="L226">            this.mappedFileQueue.setCommittedWhere(0);</span>
+<span class="fc" id="L227">            this.defaultMessageStore.destroyLogics();</span>
+        }
+<span class="fc" id="L229">    }</span>
+
+    public DispatchRequest checkMessageAndReturnSize(java.nio.ByteBuffer byteBuffer, final boolean checkCRC) {
+<span class="fc" id="L232">        return this.checkMessageAndReturnSize(byteBuffer, checkCRC, true);</span>
+    }
+
+    private void doNothingForDeadCode(final Object obj) {
+<span class="pc bpc" id="L236" title="1 of 2 branches missed.">        if (obj != null) {</span>
+<span class="fc" id="L237">            log.debug(String.valueOf(obj.hashCode()));</span>
+        }
+<span class="fc" id="L239">    }</span>
+
+    /**
+     * check the message and returns the message size
+     *
+     * @return 0 Come the end of the file // &gt;0 Normal messages // -1 Message checksum failure
+     */
+    public DispatchRequest checkMessageAndReturnSize(java.nio.ByteBuffer byteBuffer, final boolean checkCRC,
+        final boolean readBody) {
+        try {
+            // 1 TOTAL SIZE
+<span class="fc" id="L250">            int totalSize = byteBuffer.getInt();</span>
+
+            // 2 MAGIC CODE
+<span class="fc" id="L253">            int magicCode = byteBuffer.getInt();</span>
+<span class="fc bfc" id="L254" title="All 3 branches covered.">            switch (magicCode) {</span>
+                case MESSAGE_MAGIC_CODE:
+<span class="fc" id="L256">                    break;</span>
+                case BLANK_MAGIC_CODE:
+<span class="fc" id="L258">                    return new DispatchRequest(0, true /* success */);</span>
+                default:
+<span class="fc" id="L260">                    log.warn(&quot;found a illegal magic code 0x&quot; + Integer.toHexString(magicCode));</span>
+<span class="fc" id="L261">                    return new DispatchRequest(-1, false /* success */);</span>
+            }
+
+<span class="fc" id="L264">            byte[] bytesContent = new byte[totalSize];</span>
+
+<span class="fc" id="L266">            int bodyCRC = byteBuffer.getInt();</span>
+
+<span class="fc" id="L268">            int queueId = byteBuffer.getInt();</span>
+
+<span class="fc" id="L270">            int flag = byteBuffer.getInt();</span>
+
+<span class="fc" id="L272">            long queueOffset = byteBuffer.getLong();</span>
+
+<span class="fc" id="L274">            long physicOffset = byteBuffer.getLong();</span>
+
+<span class="fc" id="L276">            int sysFlag = byteBuffer.getInt();</span>
+
+<span class="fc" id="L278">            long bornTimeStamp = byteBuffer.getLong();</span>
+
+            ByteBuffer byteBuffer1;
+<span class="fc bfc" id="L281" title="All 2 branches covered.">            if ((sysFlag &amp; MessageSysFlag.BORNHOST_V6_FLAG) == 0) {</span>
+<span class="fc" id="L282">                byteBuffer1 = byteBuffer.get(bytesContent, 0, 4 + 4);</span>
+            } else {
+<span class="fc" id="L284">                byteBuffer1 = byteBuffer.get(bytesContent, 0, 16 + 4);</span>
+            }
+
+<span class="fc" id="L287">            long storeTimestamp = byteBuffer.getLong();</span>
+
+            ByteBuffer byteBuffer2;
+<span class="fc bfc" id="L290" title="All 2 branches covered.">            if ((sysFlag &amp; MessageSysFlag.STOREHOSTADDRESS_V6_FLAG) == 0) {</span>
+<span class="fc" id="L291">                byteBuffer2 = byteBuffer.get(bytesContent, 0, 4 + 4);</span>
+            } else {
+<span class="fc" id="L293">                byteBuffer2 = byteBuffer.get(bytesContent, 0, 16 + 4);</span>
+            }
+
+<span class="fc" id="L296">            int reconsumeTimes = byteBuffer.getInt();</span>
+
+<span class="fc" id="L298">            long preparedTransactionOffset = byteBuffer.getLong();</span>
+
+<span class="fc" id="L300">            int bodyLen = byteBuffer.getInt();</span>
+<span class="fc bfc" id="L301" title="All 2 branches covered.">            if (bodyLen &gt; 0) {</span>
+<span class="fc bfc" id="L302" title="All 2 branches covered.">                if (readBody) {</span>
+<span class="fc" id="L303">                    byteBuffer.get(bytesContent, 0, bodyLen);</span>
+
+<span class="pc bpc" id="L305" title="1 of 2 branches missed.">                    if (checkCRC) {</span>
+<span class="fc" id="L306">                        int crc = UtilAll.crc32(bytesContent, 0, bodyLen);</span>
+<span class="pc bpc" id="L307" title="1 of 2 branches missed.">                        if (crc != bodyCRC) {</span>
+<span class="nc" id="L308">                            log.warn(&quot;CRC check failed. bodyCRC={}, currentCRC={}&quot;, crc, bodyCRC);</span>
+<span class="nc" id="L309">                            return new DispatchRequest(-1, false/* success */);</span>
+                        }
+<span class="fc" id="L311">                    }</span>
+                } else {
+<span class="fc" id="L313">                    byteBuffer.position(byteBuffer.position() + bodyLen);</span>
+                }
+            }
+
+<span class="fc" id="L317">            byte topicLen = byteBuffer.get();</span>
+<span class="fc" id="L318">            byteBuffer.get(bytesContent, 0, topicLen);</span>
+<span class="fc" id="L319">            String topic = new String(bytesContent, 0, topicLen, MessageDecoder.CHARSET_UTF8);</span>
+
+<span class="fc" id="L321">            long tagsCode = 0;</span>
+<span class="fc" id="L322">            String keys = &quot;&quot;;</span>
+<span class="fc" id="L323">            String uniqKey = null;</span>
+
+<span class="fc" id="L325">            short propertiesLength = byteBuffer.getShort();</span>
+<span class="fc" id="L326">            Map&lt;String, String&gt; propertiesMap = null;</span>
+<span class="fc bfc" id="L327" title="All 2 branches covered.">            if (propertiesLength &gt; 0) {</span>
+<span class="fc" id="L328">                byteBuffer.get(bytesContent, 0, propertiesLength);</span>
+<span class="fc" id="L329">                String properties = new String(bytesContent, 0, propertiesLength, MessageDecoder.CHARSET_UTF8);</span>
+<span class="fc" id="L330">                propertiesMap = MessageDecoder.string2messageProperties(properties);</span>
+
+<span class="fc" id="L332">                keys = propertiesMap.get(MessageConst.PROPERTY_KEYS);</span>
+
+<span class="fc" id="L334">                uniqKey = propertiesMap.get(MessageConst.PROPERTY_UNIQ_CLIENT_MESSAGE_ID_KEYIDX);</span>
+
+<span class="fc" id="L336">                String tags = propertiesMap.get(MessageConst.PROPERTY_TAGS);</span>
+<span class="pc bpc" id="L337" title="1 of 4 branches missed.">                if (tags != null &amp;&amp; tags.length() &gt; 0) {</span>
+<span class="fc" id="L338">                    tagsCode = MessageExtBrokerInner.tagsString2tagsCode(MessageExt.parseTopicFilterType(sysFlag), tags);</span>
+                }
+
+                // Timing message processing
+                {
+<span class="fc" id="L343">                    String t = propertiesMap.get(MessageConst.PROPERTY_DELAY_TIME_LEVEL);</span>
+<span class="pc bpc" id="L344" title="1 of 4 branches missed.">                    if (TopicValidator.RMQ_SYS_SCHEDULE_TOPIC.equals(topic) &amp;&amp; t != null) {</span>
+<span class="fc" id="L345">                        int delayLevel = Integer.parseInt(t);</span>
+
+<span class="pc bpc" id="L347" title="1 of 2 branches missed.">                        if (delayLevel &gt; this.defaultMessageStore.getScheduleMessageService().getMaxDelayLevel()) {</span>
+<span class="nc" id="L348">                            delayLevel = this.defaultMessageStore.getScheduleMessageService().getMaxDelayLevel();</span>
+                        }
+
+<span class="pc bpc" id="L351" title="1 of 2 branches missed.">                        if (delayLevel &gt; 0) {</span>
+<span class="fc" id="L352">                            tagsCode = this.defaultMessageStore.getScheduleMessageService().computeDeliverTimestamp(delayLevel,</span>
+                                storeTimestamp);
+                        }
+                    }
+                }
+            }
+
+<span class="fc" id="L359">            int readLength = calMsgLength(sysFlag, bodyLen, topicLen, propertiesLength);</span>
+<span class="fc bfc" id="L360" title="All 2 branches covered.">            if (totalSize != readLength) {</span>
+<span class="fc" id="L361">                doNothingForDeadCode(reconsumeTimes);</span>
+<span class="fc" id="L362">                doNothingForDeadCode(flag);</span>
+<span class="fc" id="L363">                doNothingForDeadCode(bornTimeStamp);</span>
+<span class="fc" id="L364">                doNothingForDeadCode(byteBuffer1);</span>
+<span class="fc" id="L365">                doNothingForDeadCode(byteBuffer2);</span>
+<span class="fc" id="L366">                log.error(</span>
+                    &quot;[BUG]read total count not equals msg total size. totalSize={}, readTotalCount={}, bodyLen={}, topicLen={}, propertiesLength={}&quot;,
+<span class="fc" id="L368">                    totalSize, readLength, bodyLen, topicLen, propertiesLength);</span>
+<span class="fc" id="L369">                return new DispatchRequest(totalSize, false/* success */);</span>
+            }
+
+<span class="fc" id="L372">            return new DispatchRequest(</span>
+                topic,
+                queueId,
+                physicOffset,
+                totalSize,
+                tagsCode,
+                storeTimestamp,
+                queueOffset,
+                keys,
+                uniqKey,
+                sysFlag,
+                preparedTransactionOffset,
+                propertiesMap
+            );
+<span class="nc" id="L386">        } catch (Exception e) {</span>
+        }
+
+<span class="nc" id="L389">        return new DispatchRequest(-1, false /* success */);</span>
+    }
+
+    protected static int calMsgLength(int sysFlag, int bodyLength, int topicLength, int propertiesLength) {
+<span class="fc bfc" id="L393" title="All 2 branches covered.">        int bornhostLength = (sysFlag &amp; MessageSysFlag.BORNHOST_V6_FLAG) == 0 ? 8 : 20;</span>
+<span class="fc bfc" id="L394" title="All 2 branches covered.">        int storehostAddressLength = (sysFlag &amp; MessageSysFlag.STOREHOSTADDRESS_V6_FLAG) == 0 ? 8 : 20;</span>
+<span class="fc bfc" id="L395" title="All 4 branches covered.">        final int msgLen = 4 //TOTALSIZE</span>
+            + 4 //MAGICCODE
+            + 4 //BODYCRC
+            + 4 //QUEUEID
+            + 4 //FLAG
+            + 8 //QUEUEOFFSET
+            + 8 //PHYSICALOFFSET
+            + 4 //SYSFLAG
+            + 8 //BORNTIMESTAMP
+            + bornhostLength //BORNHOST
+            + 8 //STORETIMESTAMP
+            + storehostAddressLength //STOREHOSTADDRESS
+            + 4 //RECONSUMETIMES
+            + 8 //Prepared Transaction Offset
+            + 4 + (bodyLength &gt; 0 ? bodyLength : 0) //BODY
+            + 1 + topicLength //TOPIC
+            + 2 + (propertiesLength &gt; 0 ? propertiesLength : 0) //propertiesLength
+            + 0;
+<span class="fc" id="L413">        return msgLen;</span>
+    }
+
+    public long getConfirmOffset() {
+<span class="fc" id="L417">        return this.confirmOffset;</span>
+    }
+
+    public void setConfirmOffset(long phyOffset) {
+<span class="nc" id="L421">        this.confirmOffset = phyOffset;</span>
+<span class="nc" id="L422">    }</span>
+
+    @Deprecated
+    public void recoverAbnormally(long maxPhyOffsetOfConsumeQueue) {
+        // recover by the minimum time stamp
+<span class="fc" id="L427">        boolean checkCRCOnRecover = this.defaultMessageStore.getMessageStoreConfig().isCheckCRCOnRecover();</span>
+<span class="fc" id="L428">        final List&lt;MappedFile&gt; mappedFiles = this.mappedFileQueue.getMappedFiles();</span>
+<span class="fc bfc" id="L429" title="All 2 branches covered.">        if (!mappedFiles.isEmpty()) {</span>
+            // Looking beginning to recover from which file
+<span class="fc" id="L431">            int index = mappedFiles.size() - 1;</span>
+<span class="fc" id="L432">            MappedFile mappedFile = null;</span>
+<span class="fc bfc" id="L433" title="All 2 branches covered.">            for (; index &gt;= 0; index--) {</span>
+<span class="fc" id="L434">                mappedFile = mappedFiles.get(index);</span>
+<span class="pc bpc" id="L435" title="1 of 2 branches missed.">                if (this.isMappedFileMatchedRecover(mappedFile)) {</span>
+<span class="nc" id="L436">                    log.info(&quot;recover from this mapped file &quot; + mappedFile.getFileName());</span>
+<span class="nc" id="L437">                    break;</span>
+                }
+            }
+
+<span class="pc bpc" id="L441" title="1 of 2 branches missed.">            if (index &lt; 0) {</span>
+<span class="fc" id="L442">                index = 0;</span>
+<span class="fc" id="L443">                mappedFile = mappedFiles.get(index);</span>
+            }
+
+<span class="fc" id="L446">            ByteBuffer byteBuffer = mappedFile.sliceByteBuffer();</span>
+<span class="fc" id="L447">            long processOffset = mappedFile.getFileFromOffset();</span>
+<span class="fc" id="L448">            long mappedFileOffset = 0;</span>
+            while (true) {
+<span class="fc" id="L450">                DispatchRequest dispatchRequest = this.checkMessageAndReturnSize(byteBuffer, checkCRCOnRecover);</span>
+<span class="fc" id="L451">                int size = dispatchRequest.getMsgSize();</span>
+
+<span class="fc bfc" id="L453" title="All 2 branches covered.">                if (dispatchRequest.isSuccess()) {</span>
+                    // Normal data
+<span class="fc bfc" id="L455" title="All 2 branches covered.">                    if (size &gt; 0) {</span>
+<span class="fc" id="L456">                        mappedFileOffset += size;</span>
+
+<span class="pc bpc" id="L458" title="1 of 2 branches missed.">                        if (this.defaultMessageStore.getMessageStoreConfig().isDuplicationEnable()) {</span>
+<span class="nc bnc" id="L459" title="All 2 branches missed.">                            if (dispatchRequest.getCommitLogOffset() &lt; this.defaultMessageStore.getConfirmOffset()) {</span>
+<span class="nc" id="L460">                                this.defaultMessageStore.doDispatch(dispatchRequest);</span>
+                            }
+                        } else {
+<span class="fc" id="L463">                            this.defaultMessageStore.doDispatch(dispatchRequest);</span>
+                        }
+                    }
+                    // Come the end of the file, switch to the next file
+                    // Since the return 0 representatives met last hole, this can
+                    // not be included in truncate offset
+<span class="pc bpc" id="L469" title="1 of 2 branches missed.">                    else if (size == 0) {</span>
+<span class="fc" id="L470">                        index++;</span>
+<span class="pc bpc" id="L471" title="1 of 2 branches missed.">                        if (index &gt;= mappedFiles.size()) {</span>
+                            // The current branch under normal circumstances should
+                            // not happen
+<span class="nc" id="L474">                            log.info(&quot;recover physics file over, last mapped file &quot; + mappedFile.getFileName());</span>
+<span class="nc" id="L475">                            break;</span>
+                        } else {
+<span class="fc" id="L477">                            mappedFile = mappedFiles.get(index);</span>
+<span class="fc" id="L478">                            byteBuffer = mappedFile.sliceByteBuffer();</span>
+<span class="fc" id="L479">                            processOffset = mappedFile.getFileFromOffset();</span>
+<span class="fc" id="L480">                            mappedFileOffset = 0;</span>
+<span class="fc" id="L481">                            log.info(&quot;recover next physics file, &quot; + mappedFile.getFileName());</span>
+                        }
+                    }
+                } else {
+<span class="fc" id="L485">                    log.info(&quot;recover physics file end, &quot; + mappedFile.getFileName() + &quot; pos=&quot; + byteBuffer.position());</span>
+<span class="fc" id="L486">                    break;</span>
+                }
+<span class="fc" id="L488">            }</span>
+
+<span class="fc" id="L490">            processOffset += mappedFileOffset;</span>
+<span class="fc" id="L491">            this.mappedFileQueue.setFlushedWhere(processOffset);</span>
+<span class="fc" id="L492">            this.mappedFileQueue.setCommittedWhere(processOffset);</span>
+<span class="fc" id="L493">            this.mappedFileQueue.truncateDirtyFiles(processOffset);</span>
+
+            // Clear ConsumeQueue redundant data
+<span class="pc bpc" id="L496" title="1 of 2 branches missed.">            if (maxPhyOffsetOfConsumeQueue &gt;= processOffset) {</span>
+<span class="fc" id="L497">                log.warn(&quot;maxPhyOffsetOfConsumeQueue({}) &gt;= processOffset({}), truncate dirty logic files&quot;, maxPhyOffsetOfConsumeQueue, processOffset);</span>
+<span class="fc" id="L498">                this.defaultMessageStore.truncateDirtyLogicFiles(processOffset);</span>
+            }
+<span class="fc" id="L500">        }</span>
+        // Commitlog case files are deleted
+        else {
+<span class="fc" id="L503">            log.warn(&quot;The commitlog files are deleted, and delete the consume queue files&quot;);</span>
+<span class="fc" id="L504">            this.mappedFileQueue.setFlushedWhere(0);</span>
+<span class="fc" id="L505">            this.mappedFileQueue.setCommittedWhere(0);</span>
+<span class="fc" id="L506">            this.defaultMessageStore.destroyLogics();</span>
+        }
+<span class="fc" id="L508">    }</span>
+
+    private boolean isMappedFileMatchedRecover(final MappedFile mappedFile) {
+<span class="fc" id="L511">        ByteBuffer byteBuffer = mappedFile.sliceByteBuffer();</span>
+
+<span class="fc" id="L513">        int magicCode = byteBuffer.getInt(MessageDecoder.MESSAGE_MAGIC_CODE_POSTION);</span>
+<span class="pc bpc" id="L514" title="1 of 2 branches missed.">        if (magicCode != MESSAGE_MAGIC_CODE) {</span>
+<span class="nc" id="L515">            return false;</span>
+        }
+
+<span class="fc" id="L518">        int sysFlag = byteBuffer.getInt(MessageDecoder.SYSFLAG_POSITION);</span>
+<span class="pc bpc" id="L519" title="1 of 2 branches missed.">        int bornhostLength = (sysFlag &amp; MessageSysFlag.BORNHOST_V6_FLAG) == 0 ? 8 : 20;</span>
+<span class="fc" id="L520">        int msgStoreTimePos = 4 + 4 + 4 + 4 + 4 + 8 + 8 + 4 + 8 + bornhostLength;</span>
+<span class="fc" id="L521">        long storeTimestamp = byteBuffer.getLong(msgStoreTimePos);</span>
+<span class="pc bpc" id="L522" title="1 of 2 branches missed.">        if (0 == storeTimestamp) {</span>
+<span class="nc" id="L523">            return false;</span>
+        }
+
+<span class="pc bpc" id="L526" title="1 of 2 branches missed.">        if (this.defaultMessageStore.getMessageStoreConfig().isMessageIndexEnable()</span>
+<span class="pc bpc" id="L527" title="1 of 2 branches missed.">            &amp;&amp; this.defaultMessageStore.getMessageStoreConfig().isMessageIndexSafe()) {</span>
+<span class="nc bnc" id="L528" title="All 2 branches missed.">            if (storeTimestamp &lt;= this.defaultMessageStore.getStoreCheckpoint().getMinTimestampIndex()) {</span>
+<span class="nc" id="L529">                log.info(&quot;find check timestamp, {} {}&quot;,</span>
+<span class="nc" id="L530">                    storeTimestamp,</span>
+<span class="nc" id="L531">                    UtilAll.timeMillisToHumanString(storeTimestamp));</span>
+<span class="nc" id="L532">                return true;</span>
+            }
+        } else {
+<span class="pc bpc" id="L535" title="1 of 2 branches missed.">            if (storeTimestamp &lt;= this.defaultMessageStore.getStoreCheckpoint().getMinTimestamp()) {</span>
+<span class="nc" id="L536">                log.info(&quot;find check timestamp, {} {}&quot;,</span>
+<span class="nc" id="L537">                    storeTimestamp,</span>
+<span class="nc" id="L538">                    UtilAll.timeMillisToHumanString(storeTimestamp));</span>
+<span class="nc" id="L539">                return true;</span>
+            }
+        }
+
+<span class="fc" id="L543">        return false;</span>
+    }
+
+    private void notifyMessageArriving() {
+
+<span class="nc" id="L548">    }</span>
+
+    public boolean resetOffset(long offset) {
+<span class="nc" id="L551">        return this.mappedFileQueue.resetOffset(offset);</span>
+    }
+
+    public long getBeginTimeInLock() {
+<span class="fc" id="L555">        return beginTimeInLock;</span>
+    }
+
+    public CompletableFuture&lt;PutMessageResult&gt; asyncPutMessage(final MessageExtBrokerInner msg) {
+        // Set the storage time
+<span class="fc" id="L560">        msg.setStoreTimestamp(System.currentTimeMillis());</span>
+        // Set the message body BODY CRC (consider the most appropriate setting
+        // on the client)
+<span class="fc" id="L563">        msg.setBodyCRC(UtilAll.crc32(msg.getBody()));</span>
+        // Back to Results
+<span class="fc" id="L565">        AppendMessageResult result = null;</span>
+
+<span class="fc" id="L567">        StoreStatsService storeStatsService = this.defaultMessageStore.getStoreStatsService();</span>
+
+<span class="fc" id="L569">        String topic = msg.getTopic();</span>
+<span class="fc" id="L570">        int queueId = msg.getQueueId();</span>
+
+<span class="fc" id="L572">        final int tranType = MessageSysFlag.getTransactionValue(msg.getSysFlag());</span>
+<span class="pc bpc" id="L573" title="3 of 4 branches missed.">        if (tranType == MessageSysFlag.TRANSACTION_NOT_TYPE</span>
+                || tranType == MessageSysFlag.TRANSACTION_COMMIT_TYPE) {
+            // Delay Delivery
+<span class="pc bpc" id="L576" title="1 of 2 branches missed.">            if (msg.getDelayTimeLevel() &gt; 0) {</span>
+<span class="nc bnc" id="L577" title="All 2 branches missed.">                if (msg.getDelayTimeLevel() &gt; this.defaultMessageStore.getScheduleMessageService().getMaxDelayLevel()) {</span>
+<span class="nc" id="L578">                    msg.setDelayTimeLevel(this.defaultMessageStore.getScheduleMessageService().getMaxDelayLevel());</span>
+                }
+
+<span class="nc" id="L581">                topic = TopicValidator.RMQ_SYS_SCHEDULE_TOPIC;</span>
+<span class="nc" id="L582">                queueId = ScheduleMessageService.delayLevel2QueueId(msg.getDelayTimeLevel());</span>
+
+                // Backup real topic, queueId
+<span class="nc" id="L585">                MessageAccessor.putProperty(msg, MessageConst.PROPERTY_REAL_TOPIC, msg.getTopic());</span>
+<span class="nc" id="L586">                MessageAccessor.putProperty(msg, MessageConst.PROPERTY_REAL_QUEUE_ID, String.valueOf(msg.getQueueId()));</span>
+<span class="nc" id="L587">                msg.setPropertiesString(MessageDecoder.messageProperties2String(msg.getProperties()));</span>
+
+<span class="nc" id="L589">                msg.setTopic(topic);</span>
+<span class="nc" id="L590">                msg.setQueueId(queueId);</span>
+            }
+        }
+
+<span class="fc" id="L594">        long elapsedTimeInLock = 0;</span>
+<span class="fc" id="L595">        MappedFile unlockMappedFile = null;</span>
+<span class="fc" id="L596">        MappedFile mappedFile = this.mappedFileQueue.getLastMappedFile();</span>
+
+<span class="fc" id="L598">        putMessageLock.lock(); //spin or ReentrantLock ,depending on store config</span>
+        try {
+<span class="fc" id="L600">            long beginLockTimestamp = this.defaultMessageStore.getSystemClock().now();</span>
+<span class="fc" id="L601">            this.beginTimeInLock = beginLockTimestamp;</span>
+
+            // Here settings are stored timestamp, in order to ensure an orderly
+            // global
+<span class="fc" id="L605">            msg.setStoreTimestamp(beginLockTimestamp);</span>
+
+<span class="pc bpc" id="L607" title="1 of 4 branches missed.">            if (null == mappedFile || mappedFile.isFull()) {</span>
+<span class="fc" id="L608">                mappedFile = this.mappedFileQueue.getLastMappedFile(0); // Mark: NewFile may be cause noise</span>
+            }
+<span class="pc bpc" id="L610" title="1 of 2 branches missed.">            if (null == mappedFile) {</span>
+<span class="nc" id="L611">                log.error(&quot;create mapped file1 error, topic: &quot; + msg.getTopic() + &quot; clientAddr: &quot; + msg.getBornHostString());</span>
+<span class="nc" id="L612">                beginTimeInLock = 0;</span>
+<span class="nc" id="L613">                return CompletableFuture.completedFuture(new PutMessageResult(PutMessageStatus.CREATE_MAPEDFILE_FAILED, null));</span>
+            }
+
+<span class="fc" id="L616">            result = mappedFile.appendMessage(msg, this.appendMessageCallback);</span>
+<span class="pc bpc" id="L617" title="4 of 5 branches missed.">            switch (result.getStatus()) {</span>
+                case PUT_OK:
+<span class="fc" id="L619">                    break;</span>
+                case END_OF_FILE:
+<span class="nc" id="L621">                    unlockMappedFile = mappedFile;</span>
+                    // Create a new file, re-write the message
+<span class="nc" id="L623">                    mappedFile = this.mappedFileQueue.getLastMappedFile(0);</span>
+<span class="nc bnc" id="L624" title="All 2 branches missed.">                    if (null == mappedFile) {</span>
+                        // XXX: warn and notify me
+<span class="nc" id="L626">                        log.error(&quot;create mapped file2 error, topic: &quot; + msg.getTopic() + &quot; clientAddr: &quot; + msg.getBornHostString());</span>
+<span class="nc" id="L627">                        beginTimeInLock = 0;</span>
+<span class="nc" id="L628">                        return CompletableFuture.completedFuture(new PutMessageResult(PutMessageStatus.CREATE_MAPEDFILE_FAILED, result));</span>
+                    }
+<span class="nc" id="L630">                    result = mappedFile.appendMessage(msg, this.appendMessageCallback);</span>
+<span class="nc" id="L631">                    break;</span>
+                case MESSAGE_SIZE_EXCEEDED:
+                case PROPERTIES_SIZE_EXCEEDED:
+<span class="nc" id="L634">                    beginTimeInLock = 0;</span>
+<span class="nc" id="L635">                    return CompletableFuture.completedFuture(new PutMessageResult(PutMessageStatus.MESSAGE_ILLEGAL, result));</span>
+                case UNKNOWN_ERROR:
+<span class="nc" id="L637">                    beginTimeInLock = 0;</span>
+<span class="nc" id="L638">                    return CompletableFuture.completedFuture(new PutMessageResult(PutMessageStatus.UNKNOWN_ERROR, result));</span>
+                default:
+<span class="nc" id="L640">                    beginTimeInLock = 0;</span>
+<span class="nc" id="L641">                    return CompletableFuture.completedFuture(new PutMessageResult(PutMessageStatus.UNKNOWN_ERROR, result));</span>
+            }
+
+<span class="fc" id="L644">            elapsedTimeInLock = this.defaultMessageStore.getSystemClock().now() - beginLockTimestamp;</span>
+<span class="fc" id="L645">            beginTimeInLock = 0;</span>
+        } finally {
+<span class="fc" id="L647">            putMessageLock.unlock();</span>
+        }
+
+<span class="pc bpc" id="L650" title="1 of 2 branches missed.">        if (elapsedTimeInLock &gt; 500) {</span>
+<span class="nc" id="L651">            log.warn(&quot;[NOTIFYME]putMessage in lock cost time(ms)={}, bodyLength={} AppendMessageResult={}&quot;, elapsedTimeInLock, msg.getBody().length, result);</span>
+        }
+
+<span class="pc bpc" id="L654" title="3 of 4 branches missed.">        if (null != unlockMappedFile &amp;&amp; this.defaultMessageStore.getMessageStoreConfig().isWarmMapedFileEnable()) {</span>
+<span class="nc" id="L655">            this.defaultMessageStore.unlockMappedFile(unlockMappedFile);</span>
+        }
+
+<span class="fc" id="L658">        PutMessageResult putMessageResult = new PutMessageResult(PutMessageStatus.PUT_OK, result);</span>
+
+        // Statistics
+<span class="fc" id="L661">        storeStatsService.getSinglePutMessageTopicTimesTotal(msg.getTopic()).incrementAndGet();</span>
+<span class="fc" id="L662">        storeStatsService.getSinglePutMessageTopicSizeTotal(topic).addAndGet(result.getWroteBytes());</span>
+
+<span class="fc" id="L664">        CompletableFuture&lt;PutMessageStatus&gt; flushResultFuture = submitFlushRequest(result, msg);</span>
+<span class="fc" id="L665">        CompletableFuture&lt;PutMessageStatus&gt; replicaResultFuture = submitReplicaRequest(result, msg);</span>
+<span class="fc" id="L666">        return flushResultFuture.thenCombine(replicaResultFuture, (flushStatus, replicaStatus) -&gt; {</span>
+<span class="pc bpc" id="L667" title="1 of 2 branches missed.">            if (flushStatus != PutMessageStatus.PUT_OK) {</span>
+<span class="nc" id="L668">                putMessageResult.setPutMessageStatus(flushStatus);</span>
+            }
+<span class="fc bfc" id="L670" title="All 2 branches covered.">            if (replicaStatus != PutMessageStatus.PUT_OK) {</span>
+<span class="fc" id="L671">                putMessageResult.setPutMessageStatus(replicaStatus);</span>
+<span class="pc bpc" id="L672" title="1 of 2 branches missed.">                if (replicaStatus == PutMessageStatus.FLUSH_SLAVE_TIMEOUT) {</span>
+<span class="nc" id="L673">                    log.error(&quot;do sync transfer other node, wait return, but failed, topic: {} tags: {} client address: {}&quot;,</span>
+<span class="nc" id="L674">                            msg.getTopic(), msg.getTags(), msg.getBornHostNameString());</span>
+                }
+            }
+<span class="fc" id="L677">            return putMessageResult;</span>
+        });
+    }
+
+    public CompletableFuture&lt;PutMessageResult&gt; asyncPutMessages(final MessageExtBatch messageExtBatch) {
+<span class="nc" id="L682">        messageExtBatch.setStoreTimestamp(System.currentTimeMillis());</span>
+        AppendMessageResult result;
+
+<span class="nc" id="L685">        StoreStatsService storeStatsService = this.defaultMessageStore.getStoreStatsService();</span>
+
+<span class="nc" id="L687">        final int tranType = MessageSysFlag.getTransactionValue(messageExtBatch.getSysFlag());</span>
+
+<span class="nc bnc" id="L689" title="All 2 branches missed.">        if (tranType != MessageSysFlag.TRANSACTION_NOT_TYPE) {</span>
+<span class="nc" id="L690">            return CompletableFuture.completedFuture(new PutMessageResult(PutMessageStatus.MESSAGE_ILLEGAL, null));</span>
+        }
+<span class="nc bnc" id="L692" title="All 2 branches missed.">        if (messageExtBatch.getDelayTimeLevel() &gt; 0) {</span>
+<span class="nc" id="L693">            return CompletableFuture.completedFuture(new PutMessageResult(PutMessageStatus.MESSAGE_ILLEGAL, null));</span>
+        }
+
+<span class="nc" id="L696">        long elapsedTimeInLock = 0;</span>
+<span class="nc" id="L697">        MappedFile unlockMappedFile = null;</span>
+<span class="nc" id="L698">        MappedFile mappedFile = this.mappedFileQueue.getLastMappedFile();</span>
+
+        //fine-grained lock instead of the coarse-grained
+<span class="nc" id="L701">        MessageExtBatchEncoder batchEncoder = batchEncoderThreadLocal.get();</span>
+
+<span class="nc" id="L703">        messageExtBatch.setEncodedBuff(batchEncoder.encode(messageExtBatch));</span>
+
+<span class="nc" id="L705">        putMessageLock.lock();</span>
+        try {
+<span class="nc" id="L707">            long beginLockTimestamp = this.defaultMessageStore.getSystemClock().now();</span>
+<span class="nc" id="L708">            this.beginTimeInLock = beginLockTimestamp;</span>
+
+            // Here settings are stored timestamp, in order to ensure an orderly
+            // global
+<span class="nc" id="L712">            messageExtBatch.setStoreTimestamp(beginLockTimestamp);</span>
+
+<span class="nc bnc" id="L714" title="All 4 branches missed.">            if (null == mappedFile || mappedFile.isFull()) {</span>
+<span class="nc" id="L715">                mappedFile = this.mappedFileQueue.getLastMappedFile(0); // Mark: NewFile may be cause noise</span>
+            }
+<span class="nc bnc" id="L717" title="All 2 branches missed.">            if (null == mappedFile) {</span>
+<span class="nc" id="L718">                log.error(&quot;Create mapped file1 error, topic: {} clientAddr: {}&quot;, messageExtBatch.getTopic(), messageExtBatch.getBornHostString());</span>
+<span class="nc" id="L719">                beginTimeInLock = 0;</span>
+<span class="nc" id="L720">                return CompletableFuture.completedFuture(new PutMessageResult(PutMessageStatus.CREATE_MAPEDFILE_FAILED, null));</span>
+            }
+
+<span class="nc" id="L723">            result = mappedFile.appendMessages(messageExtBatch, this.appendMessageCallback);</span>
+<span class="nc bnc" id="L724" title="All 4 branches missed.">            switch (result.getStatus()) {</span>
+                case PUT_OK:
+<span class="nc" id="L726">                    break;</span>
+                case END_OF_FILE:
+<span class="nc" id="L728">                    unlockMappedFile = mappedFile;</span>
+                    // Create a new file, re-write the message
+<span class="nc" id="L730">                    mappedFile = this.mappedFileQueue.getLastMappedFile(0);</span>
+<span class="nc bnc" id="L731" title="All 2 branches missed.">                    if (null == mappedFile) {</span>
+                        // XXX: warn and notify me
+<span class="nc" id="L733">                        log.error(&quot;Create mapped file2 error, topic: {} clientAddr: {}&quot;, messageExtBatch.getTopic(), messageExtBatch.getBornHostString());</span>
+<span class="nc" id="L734">                        beginTimeInLock = 0;</span>
+<span class="nc" id="L735">                        return CompletableFuture.completedFuture(new PutMessageResult(PutMessageStatus.CREATE_MAPEDFILE_FAILED, result));</span>
+                    }
+<span class="nc" id="L737">                    result = mappedFile.appendMessages(messageExtBatch, this.appendMessageCallback);</span>
+<span class="nc" id="L738">                    break;</span>
+                case MESSAGE_SIZE_EXCEEDED:
+                case PROPERTIES_SIZE_EXCEEDED:
+<span class="nc" id="L741">                    beginTimeInLock = 0;</span>
+<span class="nc" id="L742">                    return CompletableFuture.completedFuture(new PutMessageResult(PutMessageStatus.MESSAGE_ILLEGAL, result));</span>
+                case UNKNOWN_ERROR:
+                default:
+<span class="nc" id="L745">                    beginTimeInLock = 0;</span>
+<span class="nc" id="L746">                    return CompletableFuture.completedFuture(new PutMessageResult(PutMessageStatus.UNKNOWN_ERROR, result));</span>
+            }
+
+<span class="nc" id="L749">            elapsedTimeInLock = this.defaultMessageStore.getSystemClock().now() - beginLockTimestamp;</span>
+<span class="nc" id="L750">            beginTimeInLock = 0;</span>
+        } finally {
+<span class="nc" id="L752">            putMessageLock.unlock();</span>
+        }
+
+<span class="nc bnc" id="L755" title="All 2 branches missed.">        if (elapsedTimeInLock &gt; 500) {</span>
+<span class="nc" id="L756">            log.warn(&quot;[NOTIFYME]putMessages in lock cost time(ms)={}, bodyLength={} AppendMessageResult={}&quot;, elapsedTimeInLock, messageExtBatch.getBody().length, result);</span>
+        }
+
+<span class="nc bnc" id="L759" title="All 4 branches missed.">        if (null != unlockMappedFile &amp;&amp; this.defaultMessageStore.getMessageStoreConfig().isWarmMapedFileEnable()) {</span>
+<span class="nc" id="L760">            this.defaultMessageStore.unlockMappedFile(unlockMappedFile);</span>
+        }
+
+<span class="nc" id="L763">        PutMessageResult putMessageResult = new PutMessageResult(PutMessageStatus.PUT_OK, result);</span>
+
+        // Statistics
+<span class="nc" id="L766">        storeStatsService.getSinglePutMessageTopicTimesTotal(messageExtBatch.getTopic()).addAndGet(result.getMsgNum());</span>
+<span class="nc" id="L767">        storeStatsService.getSinglePutMessageTopicSizeTotal(messageExtBatch.getTopic()).addAndGet(result.getWroteBytes());</span>
+
+<span class="nc" id="L769">        CompletableFuture&lt;PutMessageStatus&gt; flushOKFuture = submitFlushRequest(result, messageExtBatch);</span>
+<span class="nc" id="L770">        CompletableFuture&lt;PutMessageStatus&gt; replicaOKFuture = submitReplicaRequest(result, messageExtBatch);</span>
+<span class="nc" id="L771">        return flushOKFuture.thenCombine(replicaOKFuture, (flushStatus, replicaStatus) -&gt; {</span>
+<span class="nc bnc" id="L772" title="All 2 branches missed.">            if (flushStatus != PutMessageStatus.PUT_OK) {</span>
+<span class="nc" id="L773">                putMessageResult.setPutMessageStatus(flushStatus);</span>
+            }
+<span class="nc bnc" id="L775" title="All 2 branches missed.">            if (replicaStatus != PutMessageStatus.PUT_OK) {</span>
+<span class="nc" id="L776">                putMessageResult.setPutMessageStatus(replicaStatus);</span>
+<span class="nc bnc" id="L777" title="All 2 branches missed.">                if (replicaStatus == PutMessageStatus.FLUSH_SLAVE_TIMEOUT) {</span>
+<span class="nc" id="L778">                    log.error(&quot;do sync transfer other node, wait return, but failed, topic: {} client address: {}&quot;,</span>
+<span class="nc" id="L779">                            messageExtBatch.getTopic(), messageExtBatch.getBornHostNameString());</span>
+                }
+            }
+<span class="nc" id="L782">            return putMessageResult;</span>
+        });
+
+    }
+
+    public PutMessageResult putMessage(final MessageExtBrokerInner msg) {
+        // Set the storage time
+<span class="fc" id="L789">        msg.setStoreTimestamp(System.currentTimeMillis());</span>
+        // Set the message body BODY CRC (consider the most appropriate setting
+        // on the client)
+<span class="fc" id="L792">        msg.setBodyCRC(UtilAll.crc32(msg.getBody()));</span>
+        // Back to Results
+<span class="fc" id="L794">        AppendMessageResult result = null;</span>
+
+<span class="fc" id="L796">        StoreStatsService storeStatsService = this.defaultMessageStore.getStoreStatsService();</span>
+
+<span class="fc" id="L798">        String topic = msg.getTopic();</span>
+<span class="fc" id="L799">        int queueId = msg.getQueueId();</span>
+
+<span class="fc" id="L801">        final int tranType = MessageSysFlag.getTransactionValue(msg.getSysFlag());</span>
+<span class="pc bpc" id="L802" title="3 of 4 branches missed.">        if (tranType == MessageSysFlag.TRANSACTION_NOT_TYPE</span>
+            || tranType == MessageSysFlag.TRANSACTION_COMMIT_TYPE) {
+            // Delay Delivery
+<span class="fc bfc" id="L805" title="All 2 branches covered.">            if (msg.getDelayTimeLevel() &gt; 0) {</span>
+<span class="pc bpc" id="L806" title="1 of 2 branches missed.">                if (msg.getDelayTimeLevel() &gt; this.defaultMessageStore.getScheduleMessageService().getMaxDelayLevel()) {</span>
+<span class="nc" id="L807">                    msg.setDelayTimeLevel(this.defaultMessageStore.getScheduleMessageService().getMaxDelayLevel());</span>
+                }
+
+<span class="fc" id="L810">                topic = TopicValidator.RMQ_SYS_SCHEDULE_TOPIC;</span>
+<span class="fc" id="L811">                queueId = ScheduleMessageService.delayLevel2QueueId(msg.getDelayTimeLevel());</span>
+
+                // Backup real topic, queueId
+<span class="fc" id="L814">                MessageAccessor.putProperty(msg, MessageConst.PROPERTY_REAL_TOPIC, msg.getTopic());</span>
+<span class="fc" id="L815">                MessageAccessor.putProperty(msg, MessageConst.PROPERTY_REAL_QUEUE_ID, String.valueOf(msg.getQueueId()));</span>
+<span class="fc" id="L816">                msg.setPropertiesString(MessageDecoder.messageProperties2String(msg.getProperties()));</span>
+
+<span class="fc" id="L818">                msg.setTopic(topic);</span>
+<span class="fc" id="L819">                msg.setQueueId(queueId);</span>
+            }
+        }
+
+<span class="fc" id="L823">        InetSocketAddress bornSocketAddress = (InetSocketAddress) msg.getBornHost();</span>
+<span class="fc bfc" id="L824" title="All 2 branches covered.">        if (bornSocketAddress.getAddress() instanceof Inet6Address) {</span>
+<span class="fc" id="L825">            msg.setBornHostV6Flag();</span>
+        }
+
+<span class="fc" id="L828">        InetSocketAddress storeSocketAddress = (InetSocketAddress) msg.getStoreHost();</span>
+<span class="fc bfc" id="L829" title="All 2 branches covered.">        if (storeSocketAddress.getAddress() instanceof Inet6Address) {</span>
+<span class="fc" id="L830">            msg.setStoreHostAddressV6Flag();</span>
+        }
+
+<span class="fc" id="L833">        long elapsedTimeInLock = 0;</span>
+
+<span class="fc" id="L835">        MappedFile unlockMappedFile = null;</span>
+<span class="fc" id="L836">        MappedFile mappedFile = this.mappedFileQueue.getLastMappedFile();</span>
+
+<span class="fc" id="L838">        putMessageLock.lock(); //spin or ReentrantLock ,depending on store config</span>
+        try {
+<span class="fc" id="L840">            long beginLockTimestamp = this.defaultMessageStore.getSystemClock().now();</span>
+<span class="fc" id="L841">            this.beginTimeInLock = beginLockTimestamp;</span>
+
+            // Here settings are stored timestamp, in order to ensure an orderly
+            // global
+<span class="fc" id="L845">            msg.setStoreTimestamp(beginLockTimestamp);</span>
+
+<span class="pc bpc" id="L847" title="1 of 4 branches missed.">            if (null == mappedFile || mappedFile.isFull()) {</span>
+<span class="fc" id="L848">                mappedFile = this.mappedFileQueue.getLastMappedFile(0); // Mark: NewFile may be cause noise</span>
+            }
+<span class="pc bpc" id="L850" title="1 of 2 branches missed.">            if (null == mappedFile) {</span>
+<span class="nc" id="L851">                log.error(&quot;create mapped file1 error, topic: &quot; + msg.getTopic() + &quot; clientAddr: &quot; + msg.getBornHostString());</span>
+<span class="nc" id="L852">                beginTimeInLock = 0;</span>
+<span class="nc" id="L853">                return new PutMessageResult(PutMessageStatus.CREATE_MAPEDFILE_FAILED, null);</span>
+            }
+
+<span class="fc" id="L856">            result = mappedFile.appendMessage(msg, this.appendMessageCallback);</span>
+<span class="pc bpc" id="L857" title="3 of 5 branches missed.">            switch (result.getStatus()) {</span>
+                case PUT_OK:
+<span class="fc" id="L859">                    break;</span>
+                case END_OF_FILE:
+<span class="fc" id="L861">                    unlockMappedFile = mappedFile;</span>
+                    // Create a new file, re-write the message
+<span class="fc" id="L863">                    mappedFile = this.mappedFileQueue.getLastMappedFile(0);</span>
+<span class="pc bpc" id="L864" title="1 of 2 branches missed.">                    if (null == mappedFile) {</span>
+                        // XXX: warn and notify me
+<span class="nc" id="L866">                        log.error(&quot;create mapped file2 error, topic: &quot; + msg.getTopic() + &quot; clientAddr: &quot; + msg.getBornHostString());</span>
+<span class="nc" id="L867">                        beginTimeInLock = 0;</span>
+<span class="nc" id="L868">                        return new PutMessageResult(PutMessageStatus.CREATE_MAPEDFILE_FAILED, result);</span>
+                    }
+<span class="fc" id="L870">                    result = mappedFile.appendMessage(msg, this.appendMessageCallback);</span>
+<span class="fc" id="L871">                    break;</span>
+                case MESSAGE_SIZE_EXCEEDED:
+                case PROPERTIES_SIZE_EXCEEDED:
+<span class="nc" id="L874">                    beginTimeInLock = 0;</span>
+<span class="nc" id="L875">                    return new PutMessageResult(PutMessageStatus.MESSAGE_ILLEGAL, result);</span>
+                case UNKNOWN_ERROR:
+<span class="nc" id="L877">                    beginTimeInLock = 0;</span>
+<span class="nc" id="L878">                    return new PutMessageResult(PutMessageStatus.UNKNOWN_ERROR, result);</span>
+                default:
+<span class="nc" id="L880">                    beginTimeInLock = 0;</span>
+<span class="nc" id="L881">                    return new PutMessageResult(PutMessageStatus.UNKNOWN_ERROR, result);</span>
+            }
+
+<span class="fc" id="L884">            elapsedTimeInLock = this.defaultMessageStore.getSystemClock().now() - beginLockTimestamp;</span>
+<span class="fc" id="L885">            beginTimeInLock = 0;</span>
+        } finally {
+<span class="fc" id="L887">            putMessageLock.unlock();</span>
+        }
+
+<span class="pc bpc" id="L890" title="1 of 2 branches missed.">        if (elapsedTimeInLock &gt; 500) {</span>
+<span class="nc" id="L891">            log.warn(&quot;[NOTIFYME]putMessage in lock cost time(ms)={}, bodyLength={} AppendMessageResult={}&quot;, elapsedTimeInLock, msg.getBody().length, result);</span>
+        }
+
+<span class="pc bpc" id="L894" title="1 of 4 branches missed.">        if (null != unlockMappedFile &amp;&amp; this.defaultMessageStore.getMessageStoreConfig().isWarmMapedFileEnable()) {</span>
+<span class="nc" id="L895">            this.defaultMessageStore.unlockMappedFile(unlockMappedFile);</span>
+        }
+
+<span class="fc" id="L898">        PutMessageResult putMessageResult = new PutMessageResult(PutMessageStatus.PUT_OK, result);</span>
+
+        // Statistics
+<span class="fc" id="L901">        storeStatsService.getSinglePutMessageTopicTimesTotal(msg.getTopic()).incrementAndGet();</span>
+<span class="fc" id="L902">        storeStatsService.getSinglePutMessageTopicSizeTotal(topic).addAndGet(result.getWroteBytes());</span>
+
+<span class="fc" id="L904">        handleDiskFlush(result, putMessageResult, msg);</span>
+<span class="fc" id="L905">        handleHA(result, putMessageResult, msg);</span>
+
+<span class="fc" id="L907">        return putMessageResult;</span>
+    }
+
+    public CompletableFuture&lt;PutMessageStatus&gt; submitFlushRequest(AppendMessageResult result, MessageExt messageExt) {
+        // Synchronization flush
+<span class="pc bpc" id="L912" title="1 of 2 branches missed.">        if (FlushDiskType.SYNC_FLUSH == this.defaultMessageStore.getMessageStoreConfig().getFlushDiskType()) {</span>
+<span class="fc" id="L913">            final GroupCommitService service = (GroupCommitService) this.flushCommitLogService;</span>
+<span class="pc bpc" id="L914" title="1 of 2 branches missed.">            if (messageExt.isWaitStoreMsgOK()) {</span>
+<span class="fc" id="L915">                GroupCommitRequest request = new GroupCommitRequest(result.getWroteOffset() + result.getWroteBytes(),</span>
+<span class="fc" id="L916">                        this.defaultMessageStore.getMessageStoreConfig().getSyncFlushTimeout());</span>
+<span class="fc" id="L917">                service.putRequest(request);</span>
+<span class="fc" id="L918">                return request.future();</span>
+            } else {
+<span class="nc" id="L920">                service.wakeup();</span>
+<span class="nc" id="L921">                return CompletableFuture.completedFuture(PutMessageStatus.PUT_OK);</span>
+            }
+        }
+        // Asynchronous flush
+        else {
+<span class="nc bnc" id="L926" title="All 2 branches missed.">            if (!this.defaultMessageStore.getMessageStoreConfig().isTransientStorePoolEnable()) {</span>
+<span class="nc" id="L927">                flushCommitLogService.wakeup();</span>
+            } else  {
+<span class="nc" id="L929">                commitLogService.wakeup();</span>
+            }
+<span class="nc" id="L931">            return CompletableFuture.completedFuture(PutMessageStatus.PUT_OK);</span>
+        }
+    }
+
+    public CompletableFuture&lt;PutMessageStatus&gt; submitReplicaRequest(AppendMessageResult result, MessageExt messageExt) {
+<span class="pc bpc" id="L936" title="1 of 2 branches missed.">        if (BrokerRole.SYNC_MASTER == this.defaultMessageStore.getMessageStoreConfig().getBrokerRole()) {</span>
+<span class="fc" id="L937">            HAService service = this.defaultMessageStore.getHaService();</span>
+<span class="pc bpc" id="L938" title="1 of 2 branches missed.">            if (messageExt.isWaitStoreMsgOK()) {</span>
+<span class="fc bfc" id="L939" title="All 2 branches covered.">                if (service.isSlaveOK(result.getWroteBytes() + result.getWroteOffset())) {</span>
+<span class="fc" id="L940">                    GroupCommitRequest request = new GroupCommitRequest(result.getWroteOffset() + result.getWroteBytes(),</span>
+<span class="fc" id="L941">                            this.defaultMessageStore.getMessageStoreConfig().getSyncFlushTimeout());</span>
+<span class="fc" id="L942">                    service.putRequest(request);</span>
+<span class="fc" id="L943">                    service.getWaitNotifyObject().wakeupAll();</span>
+<span class="fc" id="L944">                    return request.future();</span>
+                }
+                else {
+<span class="fc" id="L947">                    return CompletableFuture.completedFuture(PutMessageStatus.SLAVE_NOT_AVAILABLE);</span>
+                }
+            }
+        }
+<span class="nc" id="L951">        return CompletableFuture.completedFuture(PutMessageStatus.PUT_OK);</span>
+    }
+
+
+    public void handleDiskFlush(AppendMessageResult result, PutMessageResult putMessageResult, MessageExt messageExt) {
+        // Synchronization flush
+<span class="fc bfc" id="L957" title="All 2 branches covered.">        if (FlushDiskType.SYNC_FLUSH == this.defaultMessageStore.getMessageStoreConfig().getFlushDiskType()) {</span>
+<span class="fc" id="L958">            final GroupCommitService service = (GroupCommitService) this.flushCommitLogService;</span>
+<span class="pc bpc" id="L959" title="1 of 2 branches missed.">            if (messageExt.isWaitStoreMsgOK()) {</span>
+<span class="fc" id="L960">                GroupCommitRequest request = new GroupCommitRequest(result.getWroteOffset() + result.getWroteBytes());</span>
+<span class="fc" id="L961">                service.putRequest(request);</span>
+<span class="fc" id="L962">                CompletableFuture&lt;PutMessageStatus&gt; flushOkFuture = request.future();</span>
+<span class="fc" id="L963">                PutMessageStatus flushStatus = null;</span>
+                try {
+<span class="fc" id="L965">                    flushStatus = flushOkFuture.get(this.defaultMessageStore.getMessageStoreConfig().getSyncFlushTimeout(),</span>
+                            TimeUnit.MILLISECONDS);
+<span class="nc" id="L967">                } catch (InterruptedException | ExecutionException | TimeoutException e) {</span>
+                    //flushOK=false;
+<span class="fc" id="L969">                }</span>
+<span class="pc bpc" id="L970" title="1 of 2 branches missed.">                if (flushStatus != PutMessageStatus.PUT_OK) {</span>
+<span class="nc" id="L971">                    log.error(&quot;do groupcommit, wait for flush failed, topic: &quot; + messageExt.getTopic() + &quot; tags: &quot; + messageExt.getTags()</span>
+<span class="nc" id="L972">                        + &quot; client address: &quot; + messageExt.getBornHostString());</span>
+<span class="nc" id="L973">                    putMessageResult.setPutMessageStatus(PutMessageStatus.FLUSH_DISK_TIMEOUT);</span>
+                }
+<span class="fc" id="L975">            } else {</span>
+<span class="nc" id="L976">                service.wakeup();</span>
+            }
+<span class="fc" id="L978">        }</span>
+        // Asynchronous flush
+        else {
+<span class="pc bpc" id="L981" title="1 of 2 branches missed.">            if (!this.defaultMessageStore.getMessageStoreConfig().isTransientStorePoolEnable()) {</span>
+<span class="fc" id="L982">                flushCommitLogService.wakeup();</span>
+            } else {
+<span class="nc" id="L984">                commitLogService.wakeup();</span>
+            }
+        }
+<span class="fc" id="L987">    }</span>
+
+    public void handleHA(AppendMessageResult result, PutMessageResult putMessageResult, MessageExt messageExt) {
+<span class="fc bfc" id="L990" title="All 2 branches covered.">        if (BrokerRole.SYNC_MASTER == this.defaultMessageStore.getMessageStoreConfig().getBrokerRole()) {</span>
+<span class="fc" id="L991">            HAService service = this.defaultMessageStore.getHaService();</span>
+<span class="pc bpc" id="L992" title="1 of 2 branches missed.">            if (messageExt.isWaitStoreMsgOK()) {</span>
+                // Determine whether to wait
+<span class="pc bpc" id="L994" title="1 of 2 branches missed.">                if (service.isSlaveOK(result.getWroteOffset() + result.getWroteBytes())) {</span>
+<span class="fc" id="L995">                    GroupCommitRequest request = new GroupCommitRequest(result.getWroteOffset() + result.getWroteBytes());</span>
+<span class="fc" id="L996">                    service.putRequest(request);</span>
+<span class="fc" id="L997">                    service.getWaitNotifyObject().wakeupAll();</span>
+<span class="fc" id="L998">                    PutMessageStatus replicaStatus = null;</span>
+                    try {
+<span class="fc" id="L1000">                        replicaStatus = request.future().get(this.defaultMessageStore.getMessageStoreConfig().getSyncFlushTimeout(),</span>
+                                TimeUnit.MILLISECONDS);
+<span class="nc" id="L1002">                    } catch (InterruptedException | ExecutionException | TimeoutException e) {</span>
+<span class="fc" id="L1003">                    }</span>
+<span class="pc bpc" id="L1004" title="1 of 2 branches missed.">                    if (replicaStatus != PutMessageStatus.PUT_OK) {</span>
+<span class="nc" id="L1005">                        log.error(&quot;do sync transfer other node, wait return, but failed, topic: &quot; + messageExt.getTopic() + &quot; tags: &quot;</span>
+<span class="nc" id="L1006">                            + messageExt.getTags() + &quot; client address: &quot; + messageExt.getBornHostNameString());</span>
+<span class="nc" id="L1007">                        putMessageResult.setPutMessageStatus(PutMessageStatus.FLUSH_SLAVE_TIMEOUT);</span>
+                    }
+<span class="fc" id="L1009">                }</span>
+                // Slave problem
+                else {
+                    // Tell the producer, slave not available
+<span class="nc" id="L1013">                    putMessageResult.setPutMessageStatus(PutMessageStatus.SLAVE_NOT_AVAILABLE);</span>
+                }
+            }
+        }
+
+<span class="fc" id="L1018">    }</span>
+
+    public PutMessageResult putMessages(final MessageExtBatch messageExtBatch) {
+<span class="fc" id="L1021">        messageExtBatch.setStoreTimestamp(System.currentTimeMillis());</span>
+        AppendMessageResult result;
+
+<span class="fc" id="L1024">        StoreStatsService storeStatsService = this.defaultMessageStore.getStoreStatsService();</span>
+
+<span class="fc" id="L1026">        final int tranType = MessageSysFlag.getTransactionValue(messageExtBatch.getSysFlag());</span>
+
+<span class="pc bpc" id="L1028" title="1 of 2 branches missed.">        if (tranType != MessageSysFlag.TRANSACTION_NOT_TYPE) {</span>
+<span class="nc" id="L1029">            return new PutMessageResult(PutMessageStatus.MESSAGE_ILLEGAL, null);</span>
+        }
+<span class="pc bpc" id="L1031" title="1 of 2 branches missed.">        if (messageExtBatch.getDelayTimeLevel() &gt; 0) {</span>
+<span class="nc" id="L1032">            return new PutMessageResult(PutMessageStatus.MESSAGE_ILLEGAL, null);</span>
+        }
+
+<span class="fc" id="L1035">        InetSocketAddress bornSocketAddress = (InetSocketAddress) messageExtBatch.getBornHost();</span>
+<span class="fc bfc" id="L1036" title="All 2 branches covered.">        if (bornSocketAddress.getAddress() instanceof Inet6Address) {</span>
+<span class="fc" id="L1037">            messageExtBatch.setBornHostV6Flag();</span>
+        }
+
+<span class="fc" id="L1040">        InetSocketAddress storeSocketAddress = (InetSocketAddress) messageExtBatch.getStoreHost();</span>
+<span class="fc bfc" id="L1041" title="All 2 branches covered.">        if (storeSocketAddress.getAddress() instanceof Inet6Address) {</span>
+<span class="fc" id="L1042">            messageExtBatch.setStoreHostAddressV6Flag();</span>
+        }
+
+<span class="fc" id="L1045">        long elapsedTimeInLock = 0;</span>
+<span class="fc" id="L1046">        MappedFile unlockMappedFile = null;</span>
+<span class="fc" id="L1047">        MappedFile mappedFile = this.mappedFileQueue.getLastMappedFile();</span>
+
+        //fine-grained lock instead of the coarse-grained
+<span class="fc" id="L1050">        MessageExtBatchEncoder batchEncoder = batchEncoderThreadLocal.get();</span>
+
+<span class="fc" id="L1052">        messageExtBatch.setEncodedBuff(batchEncoder.encode(messageExtBatch));</span>
+
+<span class="fc" id="L1054">        putMessageLock.lock();</span>
+        try {
+<span class="fc" id="L1056">            long beginLockTimestamp = this.defaultMessageStore.getSystemClock().now();</span>
+<span class="fc" id="L1057">            this.beginTimeInLock = beginLockTimestamp;</span>
+
+            // Here settings are stored timestamp, in order to ensure an orderly
+            // global
+<span class="fc" id="L1061">            messageExtBatch.setStoreTimestamp(beginLockTimestamp);</span>
+
+<span class="pc bpc" id="L1063" title="3 of 4 branches missed.">            if (null == mappedFile || mappedFile.isFull()) {</span>
+<span class="fc" id="L1064">                mappedFile = this.mappedFileQueue.getLastMappedFile(0); // Mark: NewFile may be cause noise</span>
+            }
+<span class="pc bpc" id="L1066" title="1 of 2 branches missed.">            if (null == mappedFile) {</span>
+<span class="nc" id="L1067">                log.error(&quot;Create mapped file1 error, topic: {} clientAddr: {}&quot;, messageExtBatch.getTopic(), messageExtBatch.getBornHostString());</span>
+<span class="nc" id="L1068">                beginTimeInLock = 0;</span>
+<span class="nc" id="L1069">                return new PutMessageResult(PutMessageStatus.CREATE_MAPEDFILE_FAILED, null);</span>
+            }
+
+<span class="fc" id="L1072">            result = mappedFile.appendMessages(messageExtBatch, this.appendMessageCallback);</span>
+<span class="pc bpc" id="L1073" title="4 of 5 branches missed.">            switch (result.getStatus()) {</span>
+                case PUT_OK:
+<span class="fc" id="L1075">                    break;</span>
+                case END_OF_FILE:
+<span class="nc" id="L1077">                    unlockMappedFile = mappedFile;</span>
+                    // Create a new file, re-write the message
+<span class="nc" id="L1079">                    mappedFile = this.mappedFileQueue.getLastMappedFile(0);</span>
+<span class="nc bnc" id="L1080" title="All 2 branches missed.">                    if (null == mappedFile) {</span>
+                        // XXX: warn and notify me
+<span class="nc" id="L1082">                        log.error(&quot;Create mapped file2 error, topic: {} clientAddr: {}&quot;, messageExtBatch.getTopic(), messageExtBatch.getBornHostString());</span>
+<span class="nc" id="L1083">                        beginTimeInLock = 0;</span>
+<span class="nc" id="L1084">                        return new PutMessageResult(PutMessageStatus.CREATE_MAPEDFILE_FAILED, result);</span>
+                    }
+<span class="nc" id="L1086">                    result = mappedFile.appendMessages(messageExtBatch, this.appendMessageCallback);</span>
+<span class="nc" id="L1087">                    break;</span>
+                case MESSAGE_SIZE_EXCEEDED:
+                case PROPERTIES_SIZE_EXCEEDED:
+<span class="nc" id="L1090">                    beginTimeInLock = 0;</span>
+<span class="nc" id="L1091">                    return new PutMessageResult(PutMessageStatus.MESSAGE_ILLEGAL, result);</span>
+                case UNKNOWN_ERROR:
+<span class="nc" id="L1093">                    beginTimeInLock = 0;</span>
+<span class="nc" id="L1094">                    return new PutMessageResult(PutMessageStatus.UNKNOWN_ERROR, result);</span>
+                default:
+<span class="nc" id="L1096">                    beginTimeInLock = 0;</span>
+<span class="nc" id="L1097">                    return new PutMessageResult(PutMessageStatus.UNKNOWN_ERROR, result);</span>
+            }
+
+<span class="fc" id="L1100">            elapsedTimeInLock = this.defaultMessageStore.getSystemClock().now() - beginLockTimestamp;</span>
+<span class="fc" id="L1101">            beginTimeInLock = 0;</span>
+        } finally {
+<span class="fc" id="L1103">            putMessageLock.unlock();</span>
+        }
+
+<span class="pc bpc" id="L1106" title="1 of 2 branches missed.">        if (elapsedTimeInLock &gt; 500) {</span>
+<span class="nc" id="L1107">            log.warn(&quot;[NOTIFYME]putMessages in lock cost time(ms)={}, bodyLength={} AppendMessageResult={}&quot;, elapsedTimeInLock, messageExtBatch.getBody().length, result);</span>
+        }
+
+<span class="pc bpc" id="L1110" title="3 of 4 branches missed.">        if (null != unlockMappedFile &amp;&amp; this.defaultMessageStore.getMessageStoreConfig().isWarmMapedFileEnable()) {</span>
+<span class="nc" id="L1111">            this.defaultMessageStore.unlockMappedFile(unlockMappedFile);</span>
+        }
+
+<span class="fc" id="L1114">        PutMessageResult putMessageResult = new PutMessageResult(PutMessageStatus.PUT_OK, result);</span>
+
+        // Statistics
+<span class="fc" id="L1117">        storeStatsService.getSinglePutMessageTopicTimesTotal(messageExtBatch.getTopic()).addAndGet(result.getMsgNum());</span>
+<span class="fc" id="L1118">        storeStatsService.getSinglePutMessageTopicSizeTotal(messageExtBatch.getTopic()).addAndGet(result.getWroteBytes());</span>
+
+<span class="fc" id="L1120">        handleDiskFlush(result, putMessageResult, messageExtBatch);</span>
+
+<span class="fc" id="L1122">        handleHA(result, putMessageResult, messageExtBatch);</span>
+
+<span class="fc" id="L1124">        return putMessageResult;</span>
+    }
+
+    /**
+     * According to receive certain message or offset storage time if an error occurs, it returns -1
+     */
+    public long pickupStoreTimestamp(final long offset, final int size) {
+<span class="fc bfc" id="L1131" title="All 2 branches covered.">        if (offset &gt;= this.getMinOffset()) {</span>
+<span class="fc" id="L1132">            SelectMappedBufferResult result = this.getMessage(offset, size);</span>
+<span class="pc bpc" id="L1133" title="1 of 2 branches missed.">            if (null != result) {</span>
+                try {
+<span class="fc" id="L1135">                    int sysFlag = result.getByteBuffer().getInt(MessageDecoder.SYSFLAG_POSITION);</span>
+<span class="fc bfc" id="L1136" title="All 2 branches covered.">                    int bornhostLength = (sysFlag &amp; MessageSysFlag.BORNHOST_V6_FLAG) == 0 ? 8 : 20;</span>
+<span class="fc" id="L1137">                    int msgStoreTimePos = 4 + 4 + 4 + 4 + 4 + 8 + 8 + 4 + 8 + bornhostLength;</span>
+<span class="fc" id="L1138">                    return result.getByteBuffer().getLong(msgStoreTimePos);</span>
+                } finally {
+<span class="fc" id="L1140">                    result.release();</span>
+                }
+            }
+        }
+
+<span class="fc" id="L1145">        return -1;</span>
+    }
+
+    public long getMinOffset() {
+<span class="fc" id="L1149">        MappedFile mappedFile = this.mappedFileQueue.getFirstMappedFile();</span>
+<span class="fc bfc" id="L1150" title="All 2 branches covered.">        if (mappedFile != null) {</span>
+<span class="fc bfc" id="L1151" title="All 2 branches covered.">            if (mappedFile.isAvailable()) {</span>
+<span class="fc" id="L1152">                return mappedFile.getFileFromOffset();</span>
+            } else {
+<span class="fc" id="L1154">                return this.rollNextFile(mappedFile.getFileFromOffset());</span>
+            }
+        }
+
+<span class="fc" id="L1158">        return -1;</span>
+    }
+
+    public SelectMappedBufferResult getMessage(final long offset, final int size) {
+<span class="fc" id="L1162">        int mappedFileSize = this.defaultMessageStore.getMessageStoreConfig().getMappedFileSizeCommitLog();</span>
+<span class="fc bfc" id="L1163" title="All 2 branches covered.">        MappedFile mappedFile = this.mappedFileQueue.findMappedFileByOffset(offset, offset == 0);</span>
+<span class="pc bpc" id="L1164" title="1 of 2 branches missed.">        if (mappedFile != null) {</span>
+<span class="fc" id="L1165">            int pos = (int) (offset % mappedFileSize);</span>
+<span class="fc" id="L1166">            return mappedFile.selectMappedBuffer(pos, size);</span>
+        }
+<span class="nc" id="L1168">        return null;</span>
+    }
+
+    public long rollNextFile(final long offset) {
+<span class="fc" id="L1172">        int mappedFileSize = this.defaultMessageStore.getMessageStoreConfig().getMappedFileSizeCommitLog();</span>
+<span class="fc" id="L1173">        return offset + mappedFileSize - offset % mappedFileSize;</span>
+    }
+
+    public HashMap&lt;String, Long&gt; getTopicQueueTable() {
+<span class="nc" id="L1177">        return topicQueueTable;</span>
+    }
+
+    public void setTopicQueueTable(HashMap&lt;String, Long&gt; topicQueueTable) {
+<span class="fc" id="L1181">        this.topicQueueTable = topicQueueTable;</span>
+<span class="fc" id="L1182">    }</span>
+
+    public void destroy() {
+<span class="fc" id="L1185">        this.mappedFileQueue.destroy();</span>
+<span class="fc" id="L1186">    }</span>
+
+    public boolean appendData(long startOffset, byte[] data) {
+<span class="fc" id="L1189">        putMessageLock.lock();</span>
+        try {
+<span class="fc" id="L1191">            MappedFile mappedFile = this.mappedFileQueue.getLastMappedFile(startOffset);</span>
+<span class="pc bpc" id="L1192" title="1 of 2 branches missed.">            if (null == mappedFile) {</span>
+<span class="nc" id="L1193">                log.error(&quot;appendData getLastMappedFile error  &quot; + startOffset);</span>
+<span class="nc" id="L1194">                return false;</span>
+            }
+
+<span class="fc" id="L1197">            return mappedFile.appendMessage(data);</span>
+        } finally {
+<span class="fc" id="L1199">            putMessageLock.unlock();</span>
+        }
+    }
+
+    public boolean retryDeleteFirstFile(final long intervalForcibly) {
+<span class="fc" id="L1204">        return this.mappedFileQueue.retryDeleteFirstFile(intervalForcibly);</span>
+    }
+
+    public void removeQueueFromTopicQueueTable(final String topic, final int queueId) {
+<span class="nc" id="L1208">        String key = topic + &quot;-&quot; + queueId;</span>
+<span class="nc" id="L1209">        synchronized (this) {</span>
+<span class="nc" id="L1210">            this.topicQueueTable.remove(key);</span>
+<span class="nc" id="L1211">        }</span>
+
+<span class="nc" id="L1213">        log.info(&quot;removeQueueFromTopicQueueTable OK Topic: {} QueueId: {}&quot;, topic, queueId);</span>
+<span class="nc" id="L1214">    }</span>
+
+    public void checkSelf() {
+<span class="nc" id="L1217">        mappedFileQueue.checkSelf();</span>
+<span class="nc" id="L1218">    }</span>
+
+    public long lockTimeMills() {
+<span class="nc" id="L1221">        long diff = 0;</span>
+<span class="nc" id="L1222">        long begin = this.beginTimeInLock;</span>
+<span class="nc bnc" id="L1223" title="All 2 branches missed.">        if (begin &gt; 0) {</span>
+<span class="nc" id="L1224">            diff = this.defaultMessageStore.now() - begin;</span>
+        }
+
+<span class="nc bnc" id="L1227" title="All 2 branches missed.">        if (diff &lt; 0) {</span>
+<span class="nc" id="L1228">            diff = 0;</span>
+        }
+
+<span class="nc" id="L1231">        return diff;</span>
+    }
+
+<span class="fc" id="L1234">    abstract class FlushCommitLogService extends ServiceThread {</span>
+        protected static final int RETRY_TIMES_OVER = 10;
+    }
+
+<span class="fc" id="L1238">    class CommitRealTimeService extends FlushCommitLogService {</span>
+
+<span class="fc" id="L1240">        private long lastCommitTimestamp = 0;</span>
+
+        @Override
+        public String getServiceName() {
+<span class="nc" id="L1244">            return CommitRealTimeService.class.getSimpleName();</span>
+        }
+
+        @Override
+        public void run() {
+<span class="nc" id="L1249">            CommitLog.log.info(this.getServiceName() + &quot; service started&quot;);</span>
+<span class="nc bnc" id="L1250" title="All 2 branches missed.">            while (!this.isStopped()) {</span>
+<span class="nc" id="L1251">                int interval = CommitLog.this.defaultMessageStore.getMessageStoreConfig().getCommitIntervalCommitLog();</span>
+
+<span class="nc" id="L1253">                int commitDataLeastPages = CommitLog.this.defaultMessageStore.getMessageStoreConfig().getCommitCommitLogLeastPages();</span>
+
+<span class="nc" id="L1255">                int commitDataThoroughInterval =</span>
+<span class="nc" id="L1256">                    CommitLog.this.defaultMessageStore.getMessageStoreConfig().getCommitCommitLogThoroughInterval();</span>
+
+<span class="nc" id="L1258">                long begin = System.currentTimeMillis();</span>
+<span class="nc bnc" id="L1259" title="All 2 branches missed.">                if (begin &gt;= (this.lastCommitTimestamp + commitDataThoroughInterval)) {</span>
+<span class="nc" id="L1260">                    this.lastCommitTimestamp = begin;</span>
+<span class="nc" id="L1261">                    commitDataLeastPages = 0;</span>
+                }
+
+                try {
+<span class="nc" id="L1265">                    boolean result = CommitLog.this.mappedFileQueue.commit(commitDataLeastPages);</span>
+<span class="nc" id="L1266">                    long end = System.currentTimeMillis();</span>
+<span class="nc bnc" id="L1267" title="All 2 branches missed.">                    if (!result) {</span>
+<span class="nc" id="L1268">                        this.lastCommitTimestamp = end; // result = false means some data committed.</span>
+                        //now wake up flush thread.
+<span class="nc" id="L1270">                        flushCommitLogService.wakeup();</span>
+                    }
+
+<span class="nc bnc" id="L1273" title="All 2 branches missed.">                    if (end - begin &gt; 500) {</span>
+<span class="nc" id="L1274">                        log.info(&quot;Commit data to file costs {} ms&quot;, end - begin);</span>
+                    }
+<span class="nc" id="L1276">                    this.waitForRunning(interval);</span>
+<span class="nc" id="L1277">                } catch (Throwable e) {</span>
+<span class="nc" id="L1278">                    CommitLog.log.error(this.getServiceName() + &quot; service has exception. &quot;, e);</span>
+<span class="nc" id="L1279">                }</span>
+<span class="nc" id="L1280">            }</span>
+
+<span class="nc" id="L1282">            boolean result = false;</span>
+<span class="nc bnc" id="L1283" title="All 4 branches missed.">            for (int i = 0; i &lt; RETRY_TIMES_OVER &amp;&amp; !result; i++) {</span>
+<span class="nc" id="L1284">                result = CommitLog.this.mappedFileQueue.commit(0);</span>
+<span class="nc bnc" id="L1285" title="All 2 branches missed.">                CommitLog.log.info(this.getServiceName() + &quot; service shutdown, retry &quot; + (i + 1) + &quot; times &quot; + (result ? &quot;OK&quot; : &quot;Not OK&quot;));</span>
+            }
+<span class="nc" id="L1287">            CommitLog.log.info(this.getServiceName() + &quot; service end&quot;);</span>
+<span class="nc" id="L1288">        }</span>
+    }
+
+<span class="fc" id="L1291">    class FlushRealTimeService extends FlushCommitLogService {</span>
+<span class="fc" id="L1292">        private long lastFlushTimestamp = 0;</span>
+<span class="fc" id="L1293">        private long printTimes = 0;</span>
+
+        public void run() {
+<span class="fc" id="L1296">            CommitLog.log.info(this.getServiceName() + &quot; service started&quot;);</span>
+
+<span class="fc bfc" id="L1298" title="All 2 branches covered.">            while (!this.isStopped()) {</span>
+<span class="fc" id="L1299">                boolean flushCommitLogTimed = CommitLog.this.defaultMessageStore.getMessageStoreConfig().isFlushCommitLogTimed();</span>
+
+<span class="fc" id="L1301">                int interval = CommitLog.this.defaultMessageStore.getMessageStoreConfig().getFlushIntervalCommitLog();</span>
+<span class="fc" id="L1302">                int flushPhysicQueueLeastPages = CommitLog.this.defaultMessageStore.getMessageStoreConfig().getFlushCommitLogLeastPages();</span>
+
+<span class="fc" id="L1304">                int flushPhysicQueueThoroughInterval =</span>
+<span class="fc" id="L1305">                    CommitLog.this.defaultMessageStore.getMessageStoreConfig().getFlushCommitLogThoroughInterval();</span>
+
+<span class="fc" id="L1307">                boolean printFlushProgress = false;</span>
+
+                // Print flush progress
+<span class="fc" id="L1310">                long currentTimeMillis = System.currentTimeMillis();</span>
+<span class="fc bfc" id="L1311" title="All 2 branches covered.">                if (currentTimeMillis &gt;= (this.lastFlushTimestamp + flushPhysicQueueThoroughInterval)) {</span>
+<span class="fc" id="L1312">                    this.lastFlushTimestamp = currentTimeMillis;</span>
+<span class="fc" id="L1313">                    flushPhysicQueueLeastPages = 0;</span>
+<span class="fc bfc" id="L1314" title="All 2 branches covered.">                    printFlushProgress = (printTimes++ % 10) == 0;</span>
+                }
+
+                try {
+<span class="pc bpc" id="L1318" title="1 of 2 branches missed.">                    if (flushCommitLogTimed) {</span>
+<span class="nc" id="L1319">                        Thread.sleep(interval);</span>
+                    } else {
+<span class="fc" id="L1321">                        this.waitForRunning(interval);</span>
+                    }
+
+<span class="fc bfc" id="L1324" title="All 2 branches covered.">                    if (printFlushProgress) {</span>
+<span class="fc" id="L1325">                        this.printFlushProgress();</span>
+                    }
+
+<span class="fc" id="L1328">                    long begin = System.currentTimeMillis();</span>
+<span class="fc" id="L1329">                    CommitLog.this.mappedFileQueue.flush(flushPhysicQueueLeastPages);</span>
+<span class="fc" id="L1330">                    long storeTimestamp = CommitLog.this.mappedFileQueue.getStoreTimestamp();</span>
+<span class="fc bfc" id="L1331" title="All 2 branches covered.">                    if (storeTimestamp &gt; 0) {</span>
+<span class="fc" id="L1332">                        CommitLog.this.defaultMessageStore.getStoreCheckpoint().setPhysicMsgTimestamp(storeTimestamp);</span>
+                    }
+<span class="fc" id="L1334">                    long past = System.currentTimeMillis() - begin;</span>
+<span class="pc bpc" id="L1335" title="1 of 2 branches missed.">                    if (past &gt; 500) {</span>
+<span class="nc" id="L1336">                        log.info(&quot;Flush data to disk costs {} ms&quot;, past);</span>
+                    }
+<span class="nc" id="L1338">                } catch (Throwable e) {</span>
+<span class="nc" id="L1339">                    CommitLog.log.warn(this.getServiceName() + &quot; service has exception. &quot;, e);</span>
+<span class="nc" id="L1340">                    this.printFlushProgress();</span>
+<span class="fc" id="L1341">                }</span>
+<span class="fc" id="L1342">            }</span>
+
+            // Normal shutdown, to ensure that all the flush before exit
+<span class="fc" id="L1345">            boolean result = false;</span>
+<span class="fc bfc" id="L1346" title="All 4 branches covered.">            for (int i = 0; i &lt; RETRY_TIMES_OVER &amp;&amp; !result; i++) {</span>
+<span class="fc" id="L1347">                result = CommitLog.this.mappedFileQueue.flush(0);</span>
+<span class="fc bfc" id="L1348" title="All 2 branches covered.">                CommitLog.log.info(this.getServiceName() + &quot; service shutdown, retry &quot; + (i + 1) + &quot; times &quot; + (result ? &quot;OK&quot; : &quot;Not OK&quot;));</span>
+            }
+
+<span class="fc" id="L1351">            this.printFlushProgress();</span>
+
+<span class="fc" id="L1353">            CommitLog.log.info(this.getServiceName() + &quot; service end&quot;);</span>
+<span class="fc" id="L1354">        }</span>
+
+        @Override
+        public String getServiceName() {
+<span class="fc" id="L1358">            return FlushRealTimeService.class.getSimpleName();</span>
+        }
+
+        private void printFlushProgress() {
+            // CommitLog.log.info(&quot;how much disk fall behind memory, &quot;
+            // + CommitLog.this.mappedFileQueue.howMuchFallBehind());
+<span class="fc" id="L1364">        }</span>
+
+        @Override
+        public long getJointime() {
+<span class="fc" id="L1368">            return 1000 * 60 * 5;</span>
+        }
+    }
+
+    public static class GroupCommitRequest {
+        private final long nextOffset;
+<span class="fc" id="L1374">        private CompletableFuture&lt;PutMessageStatus&gt; flushOKFuture = new CompletableFuture&lt;&gt;();</span>
+<span class="fc" id="L1375">        private final long startTimestamp = System.currentTimeMillis();</span>
+<span class="fc" id="L1376">        private long timeoutMillis = Long.MAX_VALUE;</span>
+
+<span class="fc" id="L1378">        public GroupCommitRequest(long nextOffset, long timeoutMillis) {</span>
+<span class="fc" id="L1379">            this.nextOffset = nextOffset;</span>
+<span class="fc" id="L1380">            this.timeoutMillis = timeoutMillis;</span>
+<span class="fc" id="L1381">        }</span>
+
+<span class="fc" id="L1383">        public GroupCommitRequest(long nextOffset) {</span>
+<span class="fc" id="L1384">            this.nextOffset = nextOffset;</span>
+<span class="fc" id="L1385">        }</span>
+
+
+        public long getNextOffset() {
+<span class="fc" id="L1389">            return nextOffset;</span>
+        }
+
+        public void wakeupCustomer(final PutMessageStatus putMessageStatus) {
+<span class="fc" id="L1393">            this.flushOKFuture.complete(putMessageStatus);</span>
+<span class="fc" id="L1394">        }</span>
+
+        public CompletableFuture&lt;PutMessageStatus&gt; future() {
+<span class="fc" id="L1397">            return flushOKFuture;</span>
+        }
+
+    }
+
+    /**
+     * GroupCommit Service
+     */
+<span class="fc" id="L1405">    class GroupCommitService extends FlushCommitLogService {</span>
+<span class="fc" id="L1406">        private volatile List&lt;GroupCommitRequest&gt; requestsWrite = new ArrayList&lt;GroupCommitRequest&gt;();</span>
+<span class="fc" id="L1407">        private volatile List&lt;GroupCommitRequest&gt; requestsRead = new ArrayList&lt;GroupCommitRequest&gt;();</span>
+
+        public synchronized void putRequest(final GroupCommitRequest request) {
+<span class="fc" id="L1410">            synchronized (this.requestsWrite) {</span>
+<span class="fc" id="L1411">                this.requestsWrite.add(request);</span>
+<span class="fc" id="L1412">            }</span>
+<span class="fc" id="L1413">            this.wakeup();</span>
+<span class="fc" id="L1414">        }</span>
+
+        private void swapRequests() {
+<span class="fc" id="L1417">            List&lt;GroupCommitRequest&gt; tmp = this.requestsWrite;</span>
+<span class="fc" id="L1418">            this.requestsWrite = this.requestsRead;</span>
+<span class="fc" id="L1419">            this.requestsRead = tmp;</span>
+<span class="fc" id="L1420">        }</span>
+
+        private void doCommit() {
+<span class="fc" id="L1423">            synchronized (this.requestsRead) {</span>
+<span class="fc bfc" id="L1424" title="All 2 branches covered.">                if (!this.requestsRead.isEmpty()) {</span>
+<span class="fc bfc" id="L1425" title="All 2 branches covered.">                    for (GroupCommitRequest req : this.requestsRead) {</span>
+                        // There may be a message in the next file, so a maximum of
+                        // two times the flush
+<span class="fc bfc" id="L1428" title="All 2 branches covered.">                        boolean flushOK = CommitLog.this.mappedFileQueue.getFlushedWhere() &gt;= req.getNextOffset();</span>
+<span class="fc bfc" id="L1429" title="All 4 branches covered.">                        for (int i = 0; i &lt; 2 &amp;&amp; !flushOK; i++) {</span>
+<span class="fc" id="L1430">                            CommitLog.this.mappedFileQueue.flush(0);</span>
+<span class="fc bfc" id="L1431" title="All 2 branches covered.">                            flushOK = CommitLog.this.mappedFileQueue.getFlushedWhere() &gt;= req.getNextOffset();</span>
+                        }
+
+<span class="pc bpc" id="L1434" title="1 of 2 branches missed.">                        req.wakeupCustomer(flushOK ? PutMessageStatus.PUT_OK : PutMessageStatus.FLUSH_DISK_TIMEOUT);</span>
+<span class="fc" id="L1435">                    }</span>
+
+<span class="fc" id="L1437">                    long storeTimestamp = CommitLog.this.mappedFileQueue.getStoreTimestamp();</span>
+<span class="pc bpc" id="L1438" title="1 of 2 branches missed.">                    if (storeTimestamp &gt; 0) {</span>
+<span class="fc" id="L1439">                        CommitLog.this.defaultMessageStore.getStoreCheckpoint().setPhysicMsgTimestamp(storeTimestamp);</span>
+                    }
+
+<span class="fc" id="L1442">                    this.requestsRead.clear();</span>
+<span class="fc" id="L1443">                } else {</span>
+                    // Because of individual messages is set to not sync flush, it
+                    // will come to this process
+<span class="fc" id="L1446">                    CommitLog.this.mappedFileQueue.flush(0);</span>
+                }
+<span class="fc" id="L1448">            }</span>
+<span class="fc" id="L1449">        }</span>
+
+        public void run() {
+<span class="fc" id="L1452">            CommitLog.log.info(this.getServiceName() + &quot; service started&quot;);</span>
+
+<span class="fc bfc" id="L1454" title="All 2 branches covered.">            while (!this.isStopped()) {</span>
+                try {
+<span class="fc" id="L1456">                    this.waitForRunning(10);</span>
+<span class="fc" id="L1457">                    this.doCommit();</span>
+<span class="nc" id="L1458">                } catch (Exception e) {</span>
+<span class="nc" id="L1459">                    CommitLog.log.warn(this.getServiceName() + &quot; service has exception. &quot;, e);</span>
+<span class="pc" id="L1460">                }</span>
+            }
+
+            // Under normal circumstances shutdown, wait for the arrival of the
+            // request, and then flush
+            try {
+<span class="fc" id="L1466">                Thread.sleep(10);</span>
+<span class="nc" id="L1467">            } catch (InterruptedException e) {</span>
+<span class="nc" id="L1468">                CommitLog.log.warn(&quot;GroupCommitService Exception, &quot;, e);</span>
+<span class="fc" id="L1469">            }</span>
+
+<span class="fc" id="L1471">            synchronized (this) {</span>
+<span class="fc" id="L1472">                this.swapRequests();</span>
+<span class="fc" id="L1473">            }</span>
+
+<span class="fc" id="L1475">            this.doCommit();</span>
+
+<span class="fc" id="L1477">            CommitLog.log.info(this.getServiceName() + &quot; service end&quot;);</span>
+<span class="fc" id="L1478">        }</span>
+
+        @Override
+        protected void onWaitEnd() {
+<span class="fc" id="L1482">            this.swapRequests();</span>
+<span class="fc" id="L1483">        }</span>
+
+        @Override
+        public String getServiceName() {
+<span class="fc" id="L1487">            return GroupCommitService.class.getSimpleName();</span>
+        }
+
+        @Override
+        public long getJointime() {
+<span class="fc" id="L1492">            return 1000 * 60 * 5;</span>
+        }
+    }
+
+    class DefaultAppendMessageCallback implements AppendMessageCallback {
+        // File at the end of the minimum fixed length empty
+        private static final int END_FILE_MIN_BLANK_LENGTH = 4 + 4;
+        private final ByteBuffer msgIdMemory;
+        private final ByteBuffer msgIdV6Memory;
+        // Store the message content
+        private final ByteBuffer msgStoreItemMemory;
+        // The maximum length of the message
+        private final int maxMessageSize;
+        // Build Message Key
+<span class="fc" id="L1506">        private final StringBuilder keyBuilder = new StringBuilder();</span>
+
+<span class="fc" id="L1508">        private final StringBuilder msgIdBuilder = new StringBuilder();</span>
+
+<span class="fc" id="L1510">        DefaultAppendMessageCallback(final int size) {</span>
+<span class="fc" id="L1511">            this.msgIdMemory = ByteBuffer.allocate(4 + 4 + 8);</span>
+<span class="fc" id="L1512">            this.msgIdV6Memory = ByteBuffer.allocate(16 + 4 + 8);</span>
+<span class="fc" id="L1513">            this.msgStoreItemMemory = ByteBuffer.allocate(size + END_FILE_MIN_BLANK_LENGTH);</span>
+<span class="fc" id="L1514">            this.maxMessageSize = size;</span>
+<span class="fc" id="L1515">        }</span>
+
+        public ByteBuffer getMsgStoreItemMemory() {
+<span class="nc" id="L1518">            return msgStoreItemMemory;</span>
+        }
+
+        public AppendMessageResult doAppend(final long fileFromOffset, final ByteBuffer byteBuffer, final int maxBlank,
+            final MessageExtBrokerInner msgInner) {
+            // STORETIMESTAMP + STOREHOSTADDRESS + OFFSET &lt;br&gt;
+
+            // PHY OFFSET
+<span class="fc" id="L1526">            long wroteOffset = fileFromOffset + byteBuffer.position();</span>
+
+<span class="fc" id="L1528">            int sysflag = msgInner.getSysFlag();</span>
+
+<span class="fc bfc" id="L1530" title="All 2 branches covered.">            int bornHostLength = (sysflag &amp; MessageSysFlag.BORNHOST_V6_FLAG) == 0 ? 4 + 4 : 16 + 4;</span>
+<span class="fc bfc" id="L1531" title="All 2 branches covered.">            int storeHostLength = (sysflag &amp; MessageSysFlag.STOREHOSTADDRESS_V6_FLAG) == 0 ? 4 + 4 : 16 + 4;</span>
+<span class="fc" id="L1532">            ByteBuffer bornHostHolder = ByteBuffer.allocate(bornHostLength);</span>
+<span class="fc" id="L1533">            ByteBuffer storeHostHolder = ByteBuffer.allocate(storeHostLength);</span>
+
+<span class="fc" id="L1535">            this.resetByteBuffer(storeHostHolder, storeHostLength);</span>
+            String msgId;
+<span class="fc bfc" id="L1537" title="All 2 branches covered.">            if ((sysflag &amp; MessageSysFlag.STOREHOSTADDRESS_V6_FLAG) == 0) {</span>
+<span class="fc" id="L1538">                msgId = MessageDecoder.createMessageId(this.msgIdMemory, msgInner.getStoreHostBytes(storeHostHolder), wroteOffset);</span>
+            } else {
+<span class="fc" id="L1540">                msgId = MessageDecoder.createMessageId(this.msgIdV6Memory, msgInner.getStoreHostBytes(storeHostHolder), wroteOffset);</span>
+            }
+
+            // Record ConsumeQueue information
+<span class="fc" id="L1544">            keyBuilder.setLength(0);</span>
+<span class="fc" id="L1545">            keyBuilder.append(msgInner.getTopic());</span>
+<span class="fc" id="L1546">            keyBuilder.append('-');</span>
+<span class="fc" id="L1547">            keyBuilder.append(msgInner.getQueueId());</span>
+<span class="fc" id="L1548">            String key = keyBuilder.toString();</span>
+<span class="fc" id="L1549">            Long queueOffset = CommitLog.this.topicQueueTable.get(key);</span>
+<span class="fc bfc" id="L1550" title="All 2 branches covered.">            if (null == queueOffset) {</span>
+<span class="fc" id="L1551">                queueOffset = 0L;</span>
+<span class="fc" id="L1552">                CommitLog.this.topicQueueTable.put(key, queueOffset);</span>
+            }
+
+            // Transaction messages that require special handling
+<span class="fc" id="L1556">            final int tranType = MessageSysFlag.getTransactionValue(msgInner.getSysFlag());</span>
+<span class="pc bpc" id="L1557" title="1 of 2 branches missed.">            switch (tranType) {</span>
+                // Prepared and Rollback message is not consumed, will not enter the
+                // consumer queuec
+                case MessageSysFlag.TRANSACTION_PREPARED_TYPE:
+                case MessageSysFlag.TRANSACTION_ROLLBACK_TYPE:
+<span class="nc" id="L1562">                    queueOffset = 0L;</span>
+<span class="nc" id="L1563">                    break;</span>
+                case MessageSysFlag.TRANSACTION_NOT_TYPE:
+                case MessageSysFlag.TRANSACTION_COMMIT_TYPE:
+                default:
+                    break;
+            }
+
+            /**
+             * Serialize message
+             */
+<span class="fc" id="L1573">            final byte[] propertiesData =</span>
+<span class="fc bfc" id="L1574" title="All 2 branches covered.">                msgInner.getPropertiesString() == null ? null : msgInner.getPropertiesString().getBytes(MessageDecoder.CHARSET_UTF8);</span>
+
+<span class="fc bfc" id="L1576" title="All 2 branches covered.">            final int propertiesLength = propertiesData == null ? 0 : propertiesData.length;</span>
+
+<span class="pc bpc" id="L1578" title="1 of 2 branches missed.">            if (propertiesLength &gt; Short.MAX_VALUE) {</span>
+<span class="nc" id="L1579">                log.warn(&quot;putMessage message properties length too long. length={}&quot;, propertiesData.length);</span>
+<span class="nc" id="L1580">                return new AppendMessageResult(AppendMessageStatus.PROPERTIES_SIZE_EXCEEDED);</span>
+            }
+
+<span class="fc" id="L1583">            final byte[] topicData = msgInner.getTopic().getBytes(MessageDecoder.CHARSET_UTF8);</span>
+<span class="fc" id="L1584">            final int topicLength = topicData.length;</span>
+
+<span class="fc bfc" id="L1586" title="All 2 branches covered.">            final int bodyLength = msgInner.getBody() == null ? 0 : msgInner.getBody().length;</span>
+
+<span class="fc" id="L1588">            final int msgLen = calMsgLength(msgInner.getSysFlag(), bodyLength, topicLength, propertiesLength);</span>
+
+            // Exceeds the maximum message
+<span class="pc bpc" id="L1591" title="1 of 2 branches missed.">            if (msgLen &gt; this.maxMessageSize) {</span>
+<span class="nc" id="L1592">                CommitLog.log.warn(&quot;message size exceeded, msg total size: &quot; + msgLen + &quot;, msg body size: &quot; + bodyLength</span>
+                    + &quot;, maxMessageSize: &quot; + this.maxMessageSize);
+<span class="nc" id="L1594">                return new AppendMessageResult(AppendMessageStatus.MESSAGE_SIZE_EXCEEDED);</span>
+            }
+
+            // Determines whether there is sufficient free space
+<span class="fc bfc" id="L1598" title="All 2 branches covered.">            if ((msgLen + END_FILE_MIN_BLANK_LENGTH) &gt; maxBlank) {</span>
+<span class="fc" id="L1599">                this.resetByteBuffer(this.msgStoreItemMemory, maxBlank);</span>
+                // 1 TOTALSIZE
+<span class="fc" id="L1601">                this.msgStoreItemMemory.putInt(maxBlank);</span>
+                // 2 MAGICCODE
+<span class="fc" id="L1603">                this.msgStoreItemMemory.putInt(CommitLog.BLANK_MAGIC_CODE);</span>
+                // 3 The remaining space may be any value
+                // Here the length of the specially set maxBlank
+<span class="fc" id="L1606">                final long beginTimeMills = CommitLog.this.defaultMessageStore.now();</span>
+<span class="fc" id="L1607">                byteBuffer.put(this.msgStoreItemMemory.array(), 0, maxBlank);</span>
+<span class="fc" id="L1608">                return new AppendMessageResult(AppendMessageStatus.END_OF_FILE, wroteOffset, maxBlank, msgId, msgInner.getStoreTimestamp(),</span>
+<span class="fc" id="L1609">                    queueOffset, CommitLog.this.defaultMessageStore.now() - beginTimeMills);</span>
+            }
+
+            // Initialization of storage space
+<span class="fc" id="L1613">            this.resetByteBuffer(msgStoreItemMemory, msgLen);</span>
+            // 1 TOTALSIZE
+<span class="fc" id="L1615">            this.msgStoreItemMemory.putInt(msgLen);</span>
+            // 2 MAGICCODE
+<span class="fc" id="L1617">            this.msgStoreItemMemory.putInt(CommitLog.MESSAGE_MAGIC_CODE);</span>
+            // 3 BODYCRC
+<span class="fc" id="L1619">            this.msgStoreItemMemory.putInt(msgInner.getBodyCRC());</span>
+            // 4 QUEUEID
+<span class="fc" id="L1621">            this.msgStoreItemMemory.putInt(msgInner.getQueueId());</span>
+            // 5 FLAG
+<span class="fc" id="L1623">            this.msgStoreItemMemory.putInt(msgInner.getFlag());</span>
+            // 6 QUEUEOFFSET
+<span class="fc" id="L1625">            this.msgStoreItemMemory.putLong(queueOffset);</span>
+            // 7 PHYSICALOFFSET
+<span class="fc" id="L1627">            this.msgStoreItemMemory.putLong(fileFromOffset + byteBuffer.position());</span>
+            // 8 SYSFLAG
+<span class="fc" id="L1629">            this.msgStoreItemMemory.putInt(msgInner.getSysFlag());</span>
+            // 9 BORNTIMESTAMP
+<span class="fc" id="L1631">            this.msgStoreItemMemory.putLong(msgInner.getBornTimestamp());</span>
+            // 10 BORNHOST
+<span class="fc" id="L1633">            this.resetByteBuffer(bornHostHolder, bornHostLength);</span>
+<span class="fc" id="L1634">            this.msgStoreItemMemory.put(msgInner.getBornHostBytes(bornHostHolder));</span>
+            // 11 STORETIMESTAMP
+<span class="fc" id="L1636">            this.msgStoreItemMemory.putLong(msgInner.getStoreTimestamp());</span>
+            // 12 STOREHOSTADDRESS
+<span class="fc" id="L1638">            this.resetByteBuffer(storeHostHolder, storeHostLength);</span>
+<span class="fc" id="L1639">            this.msgStoreItemMemory.put(msgInner.getStoreHostBytes(storeHostHolder));</span>
+            // 13 RECONSUMETIMES
+<span class="fc" id="L1641">            this.msgStoreItemMemory.putInt(msgInner.getReconsumeTimes());</span>
+            // 14 Prepared Transaction Offset
+<span class="fc" id="L1643">            this.msgStoreItemMemory.putLong(msgInner.getPreparedTransactionOffset());</span>
+            // 15 BODY
+<span class="fc" id="L1645">            this.msgStoreItemMemory.putInt(bodyLength);</span>
+<span class="fc bfc" id="L1646" title="All 2 branches covered.">            if (bodyLength &gt; 0)</span>
+<span class="fc" id="L1647">                this.msgStoreItemMemory.put(msgInner.getBody());</span>
+            // 16 TOPIC
+<span class="fc" id="L1649">            this.msgStoreItemMemory.put((byte) topicLength);</span>
+<span class="fc" id="L1650">            this.msgStoreItemMemory.put(topicData);</span>
+            // 17 PROPERTIES
+<span class="fc" id="L1652">            this.msgStoreItemMemory.putShort((short) propertiesLength);</span>
+<span class="fc bfc" id="L1653" title="All 2 branches covered.">            if (propertiesLength &gt; 0)</span>
+<span class="fc" id="L1654">                this.msgStoreItemMemory.put(propertiesData);</span>
+
+<span class="fc" id="L1656">            final long beginTimeMills = CommitLog.this.defaultMessageStore.now();</span>
+            // Write messages to the queue buffer
+<span class="fc" id="L1658">            byteBuffer.put(this.msgStoreItemMemory.array(), 0, msgLen);</span>
+
+<span class="fc" id="L1660">            AppendMessageResult result = new AppendMessageResult(AppendMessageStatus.PUT_OK, wroteOffset, msgLen, msgId,</span>
+<span class="fc" id="L1661">                msgInner.getStoreTimestamp(), queueOffset, CommitLog.this.defaultMessageStore.now() - beginTimeMills);</span>
+
+<span class="pc bpc" id="L1663" title="2 of 3 branches missed.">            switch (tranType) {</span>
+                case MessageSysFlag.TRANSACTION_PREPARED_TYPE:
+                case MessageSysFlag.TRANSACTION_ROLLBACK_TYPE:
+<span class="nc" id="L1666">                    break;</span>
+                case MessageSysFlag.TRANSACTION_NOT_TYPE:
+                case MessageSysFlag.TRANSACTION_COMMIT_TYPE:
+                    // The next update ConsumeQueue information
+<span class="fc" id="L1670">                    CommitLog.this.topicQueueTable.put(key, ++queueOffset);</span>
+<span class="fc" id="L1671">                    break;</span>
+                default:
+                    break;
+            }
+<span class="fc" id="L1675">            return result;</span>
+        }
+
+        public AppendMessageResult doAppend(final long fileFromOffset, final ByteBuffer byteBuffer, final int maxBlank,
+            final MessageExtBatch messageExtBatch) {
+<span class="fc" id="L1680">            byteBuffer.mark();</span>
+            //physical offset
+<span class="fc" id="L1682">            long wroteOffset = fileFromOffset + byteBuffer.position();</span>
+            // Record ConsumeQueue information
+<span class="fc" id="L1684">            keyBuilder.setLength(0);</span>
+<span class="fc" id="L1685">            keyBuilder.append(messageExtBatch.getTopic());</span>
+<span class="fc" id="L1686">            keyBuilder.append('-');</span>
+<span class="fc" id="L1687">            keyBuilder.append(messageExtBatch.getQueueId());</span>
+<span class="fc" id="L1688">            String key = keyBuilder.toString();</span>
+<span class="fc" id="L1689">            Long queueOffset = CommitLog.this.topicQueueTable.get(key);</span>
+<span class="pc bpc" id="L1690" title="1 of 2 branches missed.">            if (null == queueOffset) {</span>
+<span class="fc" id="L1691">                queueOffset = 0L;</span>
+<span class="fc" id="L1692">                CommitLog.this.topicQueueTable.put(key, queueOffset);</span>
+            }
+<span class="fc" id="L1694">            long beginQueueOffset = queueOffset;</span>
+<span class="fc" id="L1695">            int totalMsgLen = 0;</span>
+<span class="fc" id="L1696">            int msgNum = 0;</span>
+<span class="fc" id="L1697">            msgIdBuilder.setLength(0);</span>
+<span class="fc" id="L1698">            final long beginTimeMills = CommitLog.this.defaultMessageStore.now();</span>
+<span class="fc" id="L1699">            ByteBuffer messagesByteBuff = messageExtBatch.getEncodedBuff();</span>
+
+<span class="fc" id="L1701">            int sysFlag = messageExtBatch.getSysFlag();</span>
+<span class="fc bfc" id="L1702" title="All 2 branches covered.">            int storeHostLength = (sysFlag &amp; MessageSysFlag.STOREHOSTADDRESS_V6_FLAG) == 0 ? 4 + 4 : 16 + 4;</span>
+<span class="fc" id="L1703">            ByteBuffer storeHostHolder = ByteBuffer.allocate(storeHostLength);</span>
+
+<span class="fc" id="L1705">            this.resetByteBuffer(storeHostHolder, storeHostLength);</span>
+<span class="fc" id="L1706">            ByteBuffer storeHostBytes = messageExtBatch.getStoreHostBytes(storeHostHolder);</span>
+<span class="fc" id="L1707">            messagesByteBuff.mark();</span>
+<span class="fc bfc" id="L1708" title="All 2 branches covered.">            while (messagesByteBuff.hasRemaining()) {</span>
+                // 1 TOTALSIZE
+<span class="fc" id="L1710">                final int msgPos = messagesByteBuff.position();</span>
+<span class="fc" id="L1711">                final int msgLen = messagesByteBuff.getInt();</span>
+<span class="fc" id="L1712">                final int bodyLen = msgLen - 40; //only for log, just estimate it</span>
+                // Exceeds the maximum message
+<span class="pc bpc" id="L1714" title="1 of 2 branches missed.">                if (msgLen &gt; this.maxMessageSize) {</span>
+<span class="nc" id="L1715">                    CommitLog.log.warn(&quot;message size exceeded, msg total size: &quot; + msgLen + &quot;, msg body size: &quot; + bodyLen</span>
+                        + &quot;, maxMessageSize: &quot; + this.maxMessageSize);
+<span class="nc" id="L1717">                    return new AppendMessageResult(AppendMessageStatus.MESSAGE_SIZE_EXCEEDED);</span>
+                }
+<span class="fc" id="L1719">                totalMsgLen += msgLen;</span>
+                // Determines whether there is sufficient free space
+<span class="fc bfc" id="L1721" title="All 2 branches covered.">                if ((totalMsgLen + END_FILE_MIN_BLANK_LENGTH) &gt; maxBlank) {</span>
+<span class="fc" id="L1722">                    this.resetByteBuffer(this.msgStoreItemMemory, 8);</span>
+                    // 1 TOTALSIZE
+<span class="fc" id="L1724">                    this.msgStoreItemMemory.putInt(maxBlank);</span>
+                    // 2 MAGICCODE
+<span class="fc" id="L1726">                    this.msgStoreItemMemory.putInt(CommitLog.BLANK_MAGIC_CODE);</span>
+                    // 3 The remaining space may be any value
+                    //ignore previous read
+<span class="fc" id="L1729">                    messagesByteBuff.reset();</span>
+                    // Here the length of the specially set maxBlank
+<span class="fc" id="L1731">                    byteBuffer.reset(); //ignore the previous appended messages</span>
+<span class="fc" id="L1732">                    byteBuffer.put(this.msgStoreItemMemory.array(), 0, 8);</span>
+<span class="fc" id="L1733">                    return new AppendMessageResult(AppendMessageStatus.END_OF_FILE, wroteOffset, maxBlank, msgIdBuilder.toString(), messageExtBatch.getStoreTimestamp(),</span>
+<span class="fc" id="L1734">                        beginQueueOffset, CommitLog.this.defaultMessageStore.now() - beginTimeMills);</span>
+                }
+                //move to add queue offset and commitlog offset
+<span class="fc" id="L1737">                messagesByteBuff.position(msgPos + 20);</span>
+<span class="fc" id="L1738">                messagesByteBuff.putLong(queueOffset);</span>
+<span class="fc" id="L1739">                messagesByteBuff.putLong(wroteOffset + totalMsgLen - msgLen);</span>
+
+<span class="fc" id="L1741">                storeHostBytes.rewind();</span>
+                String msgId;
+<span class="fc bfc" id="L1743" title="All 2 branches covered.">                if ((sysFlag &amp; MessageSysFlag.STOREHOSTADDRESS_V6_FLAG) == 0) {</span>
+<span class="fc" id="L1744">                    msgId = MessageDecoder.createMessageId(this.msgIdMemory, storeHostBytes, wroteOffset + totalMsgLen - msgLen);</span>
+                } else {
+<span class="fc" id="L1746">                    msgId = MessageDecoder.createMessageId(this.msgIdV6Memory, storeHostBytes, wroteOffset + totalMsgLen - msgLen);</span>
+                }
+
+<span class="fc bfc" id="L1749" title="All 2 branches covered.">                if (msgIdBuilder.length() &gt; 0) {</span>
+<span class="fc" id="L1750">                    msgIdBuilder.append(',').append(msgId);</span>
+                } else {
+<span class="fc" id="L1752">                    msgIdBuilder.append(msgId);</span>
+                }
+<span class="fc" id="L1754">                queueOffset++;</span>
+<span class="fc" id="L1755">                msgNum++;</span>
+<span class="fc" id="L1756">                messagesByteBuff.position(msgPos + msgLen);</span>
+<span class="fc" id="L1757">            }</span>
+
+<span class="fc" id="L1759">            messagesByteBuff.position(0);</span>
+<span class="fc" id="L1760">            messagesByteBuff.limit(totalMsgLen);</span>
+<span class="fc" id="L1761">            byteBuffer.put(messagesByteBuff);</span>
+<span class="fc" id="L1762">            messageExtBatch.setEncodedBuff(null);</span>
+<span class="fc" id="L1763">            AppendMessageResult result = new AppendMessageResult(AppendMessageStatus.PUT_OK, wroteOffset, totalMsgLen, msgIdBuilder.toString(),</span>
+<span class="fc" id="L1764">                messageExtBatch.getStoreTimestamp(), beginQueueOffset, CommitLog.this.defaultMessageStore.now() - beginTimeMills);</span>
+<span class="fc" id="L1765">            result.setMsgNum(msgNum);</span>
+<span class="fc" id="L1766">            CommitLog.this.topicQueueTable.put(key, queueOffset);</span>
+
+<span class="fc" id="L1768">            return result;</span>
+        }
+
+        private void resetByteBuffer(final ByteBuffer byteBuffer, final int limit) {
+<span class="fc" id="L1772">            byteBuffer.flip();</span>
+<span class="fc" id="L1773">            byteBuffer.limit(limit);</span>
+<span class="fc" id="L1774">        }</span>
+
+    }
+
+    public static class MessageExtBatchEncoder {
+        // Store the message content
+        private final ByteBuffer msgBatchMemory;
+        // The maximum length of the message
+        private final int maxMessageSize;
+
+<span class="fc" id="L1784">        MessageExtBatchEncoder(final int size) {</span>
+<span class="fc" id="L1785">            this.msgBatchMemory = ByteBuffer.allocateDirect(size);</span>
+<span class="fc" id="L1786">            this.maxMessageSize = size;</span>
+<span class="fc" id="L1787">        }</span>
+
+        public ByteBuffer encode(final MessageExtBatch messageExtBatch) {
+<span class="fc" id="L1790">            msgBatchMemory.clear(); //not thread-safe</span>
+<span class="fc" id="L1791">            int totalMsgLen = 0;</span>
+<span class="fc" id="L1792">            ByteBuffer messagesByteBuff = messageExtBatch.wrap();</span>
+
+<span class="fc" id="L1794">            int sysFlag = messageExtBatch.getSysFlag();</span>
+<span class="fc bfc" id="L1795" title="All 2 branches covered.">            int bornHostLength = (sysFlag &amp; MessageSysFlag.BORNHOST_V6_FLAG) == 0 ? 4 + 4 : 16 + 4;</span>
+<span class="fc bfc" id="L1796" title="All 2 branches covered.">            int storeHostLength = (sysFlag &amp; MessageSysFlag.STOREHOSTADDRESS_V6_FLAG) == 0 ? 4 + 4 : 16 + 4;</span>
+<span class="fc" id="L1797">            ByteBuffer bornHostHolder = ByteBuffer.allocate(bornHostLength);</span>
+<span class="fc" id="L1798">            ByteBuffer storeHostHolder = ByteBuffer.allocate(storeHostLength);</span>
+
+            // properties from MessageExtBatch
+<span class="fc" id="L1801">            String batchPropStr = MessageDecoder.messageProperties2String(messageExtBatch.getProperties());</span>
+<span class="fc" id="L1802">            final byte[] batchPropData = batchPropStr.getBytes(MessageDecoder.CHARSET_UTF8);</span>
+<span class="fc" id="L1803">            final short batchPropLen = (short) batchPropData.length;</span>
+
+<span class="fc bfc" id="L1805" title="All 2 branches covered.">            while (messagesByteBuff.hasRemaining()) {</span>
+                // 1 TOTALSIZE
+<span class="fc" id="L1807">                messagesByteBuff.getInt();</span>
+                // 2 MAGICCODE
+<span class="fc" id="L1809">                messagesByteBuff.getInt();</span>
+                // 3 BODYCRC
+<span class="fc" id="L1811">                messagesByteBuff.getInt();</span>
+                // 4 FLAG
+<span class="fc" id="L1813">                int flag = messagesByteBuff.getInt();</span>
+                // 5 BODY
+<span class="fc" id="L1815">                int bodyLen = messagesByteBuff.getInt();</span>
+<span class="fc" id="L1816">                int bodyPos = messagesByteBuff.position();</span>
+<span class="fc" id="L1817">                int bodyCrc = UtilAll.crc32(messagesByteBuff.array(), bodyPos, bodyLen);</span>
+<span class="fc" id="L1818">                messagesByteBuff.position(bodyPos + bodyLen);</span>
+                // 6 properties
+<span class="fc" id="L1820">                short propertiesLen = messagesByteBuff.getShort();</span>
+<span class="fc" id="L1821">                int propertiesPos = messagesByteBuff.position();</span>
+<span class="fc" id="L1822">                messagesByteBuff.position(propertiesPos + propertiesLen);</span>
+
+<span class="fc" id="L1824">                final byte[] topicData = messageExtBatch.getTopic().getBytes(MessageDecoder.CHARSET_UTF8);</span>
+
+<span class="fc" id="L1826">                final int topicLength = topicData.length;</span>
+
+<span class="fc" id="L1828">                final int msgLen = calMsgLength(messageExtBatch.getSysFlag(), bodyLen, topicLength,</span>
+                        propertiesLen + batchPropLen);
+
+                // Exceeds the maximum message
+<span class="pc bpc" id="L1832" title="1 of 2 branches missed.">                if (msgLen &gt; this.maxMessageSize) {</span>
+<span class="nc" id="L1833">                    CommitLog.log.warn(&quot;message size exceeded, msg total size: &quot; + msgLen + &quot;, msg body size: &quot; + bodyLen</span>
+                        + &quot;, maxMessageSize: &quot; + this.maxMessageSize);
+<span class="nc" id="L1835">                    throw new RuntimeException(&quot;message size exceeded&quot;);</span>
+                }
+
+<span class="fc" id="L1838">                totalMsgLen += msgLen;</span>
+                // Determines whether there is sufficient free space
+<span class="pc bpc" id="L1840" title="1 of 2 branches missed.">                if (totalMsgLen &gt; maxMessageSize) {</span>
+<span class="nc" id="L1841">                    throw new RuntimeException(&quot;message size exceeded&quot;);</span>
+                }
+
+                // 1 TOTALSIZE
+<span class="fc" id="L1845">                this.msgBatchMemory.putInt(msgLen);</span>
+                // 2 MAGICCODE
+<span class="fc" id="L1847">                this.msgBatchMemory.putInt(CommitLog.MESSAGE_MAGIC_CODE);</span>
+                // 3 BODYCRC
+<span class="fc" id="L1849">                this.msgBatchMemory.putInt(bodyCrc);</span>
+                // 4 QUEUEID
+<span class="fc" id="L1851">                this.msgBatchMemory.putInt(messageExtBatch.getQueueId());</span>
+                // 5 FLAG
+<span class="fc" id="L1853">                this.msgBatchMemory.putInt(flag);</span>
+                // 6 QUEUEOFFSET
+<span class="fc" id="L1855">                this.msgBatchMemory.putLong(0);</span>
+                // 7 PHYSICALOFFSET
+<span class="fc" id="L1857">                this.msgBatchMemory.putLong(0);</span>
+                // 8 SYSFLAG
+<span class="fc" id="L1859">                this.msgBatchMemory.putInt(messageExtBatch.getSysFlag());</span>
+                // 9 BORNTIMESTAMP
+<span class="fc" id="L1861">                this.msgBatchMemory.putLong(messageExtBatch.getBornTimestamp());</span>
+                // 10 BORNHOST
+<span class="fc" id="L1863">                this.resetByteBuffer(bornHostHolder, bornHostLength);</span>
+<span class="fc" id="L1864">                this.msgBatchMemory.put(messageExtBatch.getBornHostBytes(bornHostHolder));</span>
+                // 11 STORETIMESTAMP
+<span class="fc" id="L1866">                this.msgBatchMemory.putLong(messageExtBatch.getStoreTimestamp());</span>
+                // 12 STOREHOSTADDRESS
+<span class="fc" id="L1868">                this.resetByteBuffer(storeHostHolder, storeHostLength);</span>
+<span class="fc" id="L1869">                this.msgBatchMemory.put(messageExtBatch.getStoreHostBytes(storeHostHolder));</span>
+                // 13 RECONSUMETIMES
+<span class="fc" id="L1871">                this.msgBatchMemory.putInt(messageExtBatch.getReconsumeTimes());</span>
+                // 14 Prepared Transaction Offset, batch does not support transaction
+<span class="fc" id="L1873">                this.msgBatchMemory.putLong(0);</span>
+                // 15 BODY
+<span class="fc" id="L1875">                this.msgBatchMemory.putInt(bodyLen);</span>
+<span class="pc bpc" id="L1876" title="1 of 2 branches missed.">                if (bodyLen &gt; 0)</span>
+<span class="fc" id="L1877">                    this.msgBatchMemory.put(messagesByteBuff.array(), bodyPos, bodyLen);</span>
+                // 16 TOPIC
+<span class="fc" id="L1879">                this.msgBatchMemory.put((byte) topicLength);</span>
+<span class="fc" id="L1880">                this.msgBatchMemory.put(topicData);</span>
+                // 17 PROPERTIES
+<span class="fc" id="L1882">                this.msgBatchMemory.putShort((short) (propertiesLen + batchPropLen));</span>
+<span class="pc bpc" id="L1883" title="1 of 2 branches missed.">                if (propertiesLen &gt; 0) {</span>
+<span class="fc" id="L1884">                    this.msgBatchMemory.put(messagesByteBuff.array(), propertiesPos, propertiesLen);</span>
+                }
+<span class="fc bfc" id="L1886" title="All 2 branches covered.">                if (batchPropLen &gt; 0) {</span>
+<span class="fc" id="L1887">                    this.msgBatchMemory.put(batchPropData, 0, batchPropLen);</span>
+                }
+<span class="fc" id="L1889">            }</span>
+<span class="fc" id="L1890">            msgBatchMemory.flip();</span>
+<span class="fc" id="L1891">            return msgBatchMemory;</span>
+        }
+
+        private void resetByteBuffer(final ByteBuffer byteBuffer, final int limit) {
+<span class="fc" id="L1895">            byteBuffer.flip();</span>
+<span class="fc" id="L1896">            byteBuffer.limit(limit);</span>
+<span class="fc" id="L1897">        }</span>
+
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.5.201910111838</span></div></body></html>

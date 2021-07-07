@@ -1,0 +1,130 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>BrokerFastFailure.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">rocketmq-broker 4.8.0</a> &gt; <a href="index.source.html" class="el_package">org.apache.rocketmq.broker.latency</a> &gt; <span class="el_source">BrokerFastFailure.java</span></div><h1>BrokerFastFailure.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.rocketmq.broker.latency;
+
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+import org.apache.rocketmq.broker.BrokerController;
+import org.apache.rocketmq.common.ThreadFactoryImpl;
+import org.apache.rocketmq.common.constant.LoggerName;
+import org.apache.rocketmq.logging.InternalLogger;
+import org.apache.rocketmq.logging.InternalLoggerFactory;
+import org.apache.rocketmq.remoting.netty.RequestTask;
+import org.apache.rocketmq.remoting.protocol.RemotingSysResponseCode;
+
+public class BrokerFastFailure {
+<span class="fc" id="L32">    private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.BROKER_LOGGER_NAME);</span>
+<span class="fc" id="L33">    private final ScheduledExecutorService scheduledExecutorService = Executors.newSingleThreadScheduledExecutor(new ThreadFactoryImpl(</span>
+        &quot;BrokerFastFailureScheduledThread&quot;));
+    private final BrokerController brokerController;
+
+<span class="fc" id="L37">    public BrokerFastFailure(final BrokerController brokerController) {</span>
+<span class="fc" id="L38">        this.brokerController = brokerController;</span>
+<span class="fc" id="L39">    }</span>
+
+    public static RequestTask castRunnable(final Runnable runnable) {
+        try {
+<span class="fc bfc" id="L43" title="All 2 branches covered.">            if (runnable instanceof FutureTaskExt) {</span>
+<span class="fc" id="L44">                FutureTaskExt object = (FutureTaskExt) runnable;</span>
+<span class="fc" id="L45">                return (RequestTask) object.getRunnable();</span>
+            }
+<span class="nc" id="L47">        } catch (Throwable e) {</span>
+<span class="nc" id="L48">            log.error(String.format(&quot;castRunnable exception, %s&quot;, runnable.getClass().getName()), e);</span>
+<span class="fc" id="L49">        }</span>
+
+<span class="fc" id="L51">        return null;</span>
+    }
+
+    public void start() {
+<span class="fc" id="L55">        this.scheduledExecutorService.scheduleAtFixedRate(new Runnable() {</span>
+            @Override
+            public void run() {
+<span class="pc bpc" id="L58" title="1 of 2 branches missed.">                if (brokerController.getBrokerConfig().isBrokerFastFailureEnable()) {</span>
+<span class="fc" id="L59">                    cleanExpiredRequest();</span>
+                }
+<span class="fc" id="L61">            }</span>
+        }, 1000, 10, TimeUnit.MILLISECONDS);
+<span class="fc" id="L63">    }</span>
+
+    private void cleanExpiredRequest() {
+<span class="pc bpc" id="L66" title="1 of 2 branches missed.">        while (this.brokerController.getMessageStore().isOSPageCacheBusy()) {</span>
+            try {
+<span class="nc bnc" id="L68" title="All 2 branches missed.">                if (!this.brokerController.getSendThreadPoolQueue().isEmpty()) {</span>
+<span class="nc" id="L69">                    final Runnable runnable = this.brokerController.getSendThreadPoolQueue().poll(0, TimeUnit.SECONDS);</span>
+<span class="nc bnc" id="L70" title="All 2 branches missed.">                    if (null == runnable) {</span>
+<span class="nc" id="L71">                        break;</span>
+                    }
+
+<span class="nc" id="L74">                    final RequestTask rt = castRunnable(runnable);</span>
+<span class="nc" id="L75">                    rt.returnResponse(RemotingSysResponseCode.SYSTEM_BUSY, String.format(&quot;[PCBUSY_CLEAN_QUEUE]broker busy, start flow control for a while, period in queue: %sms, size of queue: %d&quot;, System.currentTimeMillis() - rt.getCreateTimestamp(), this.brokerController.getSendThreadPoolQueue().size()));</span>
+<span class="nc" id="L76">                } else {</span>
+<span class="nc" id="L77">                    break;</span>
+                }
+<span class="nc" id="L79">            } catch (Throwable ignored) {</span>
+<span class="nc" id="L80">            }</span>
+        }
+
+<span class="fc" id="L83">        cleanExpiredRequestInQueue(this.brokerController.getSendThreadPoolQueue(),</span>
+<span class="fc" id="L84">            this.brokerController.getBrokerConfig().getWaitTimeMillsInSendQueue());</span>
+
+<span class="fc" id="L86">        cleanExpiredRequestInQueue(this.brokerController.getPullThreadPoolQueue(),</span>
+<span class="fc" id="L87">            this.brokerController.getBrokerConfig().getWaitTimeMillsInPullQueue());</span>
+
+<span class="fc" id="L89">        cleanExpiredRequestInQueue(this.brokerController.getHeartbeatThreadPoolQueue(),</span>
+<span class="fc" id="L90">            this.brokerController.getBrokerConfig().getWaitTimeMillsInHeartbeatQueue());</span>
+
+<span class="fc" id="L92">        cleanExpiredRequestInQueue(this.brokerController.getEndTransactionThreadPoolQueue(), this</span>
+<span class="fc" id="L93">            .brokerController.getBrokerConfig().getWaitTimeMillsInTransactionQueue());</span>
+<span class="fc" id="L94">    }</span>
+
+    void cleanExpiredRequestInQueue(final BlockingQueue&lt;Runnable&gt; blockingQueue, final long maxWaitTimeMillsInQueue) {
+        while (true) {
+            try {
+<span class="fc bfc" id="L99" title="All 2 branches covered.">                if (!blockingQueue.isEmpty()) {</span>
+<span class="fc" id="L100">                    final Runnable runnable = blockingQueue.peek();</span>
+<span class="pc bpc" id="L101" title="1 of 2 branches missed.">                    if (null == runnable) {</span>
+<span class="nc" id="L102">                        break;</span>
+                    }
+<span class="fc" id="L104">                    final RequestTask rt = castRunnable(runnable);</span>
+<span class="pc bpc" id="L105" title="1 of 4 branches missed.">                    if (rt == null || rt.isStopRun()) {</span>
+<span class="fc" id="L106">                        break;</span>
+                    }
+
+<span class="fc" id="L109">                    final long behind = System.currentTimeMillis() - rt.getCreateTimestamp();</span>
+<span class="fc bfc" id="L110" title="All 2 branches covered.">                    if (behind &gt;= maxWaitTimeMillsInQueue) {</span>
+<span class="pc bpc" id="L111" title="1 of 2 branches missed.">                        if (blockingQueue.remove(runnable)) {</span>
+<span class="fc" id="L112">                            rt.setStopRun(true);</span>
+<span class="nc" id="L113">                            rt.returnResponse(RemotingSysResponseCode.SYSTEM_BUSY, String.format(&quot;[TIMEOUT_CLEAN_QUEUE]broker busy, start flow control for a while, period in queue: %sms, size of queue: %d&quot;, behind, blockingQueue.size()));</span>
+                        }
+                    } else {
+<span class="fc" id="L116">                        break;</span>
+                    }
+<span class="nc" id="L118">                } else {</span>
+<span class="fc" id="L119">                    break;</span>
+                }
+<span class="fc" id="L121">            } catch (Throwable ignored) {</span>
+<span class="pc" id="L122">            }</span>
+        }
+<span class="fc" id="L124">    }</span>
+
+    public void shutdown() {
+<span class="fc" id="L127">        this.scheduledExecutorService.shutdown();</span>
+<span class="fc" id="L128">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.5.201910111838</span></div></body></html>

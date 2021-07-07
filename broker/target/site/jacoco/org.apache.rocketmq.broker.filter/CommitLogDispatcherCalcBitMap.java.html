@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>CommitLogDispatcherCalcBitMap.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">rocketmq-broker 4.8.0</a> &gt; <a href="index.source.html" class="el_package">org.apache.rocketmq.broker.filter</a> &gt; <span class="el_source">CommitLogDispatcherCalcBitMap.java</span></div><h1>CommitLogDispatcherCalcBitMap.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.rocketmq.broker.filter;
+
+import org.apache.rocketmq.common.BrokerConfig;
+import org.apache.rocketmq.common.UtilAll;
+import org.apache.rocketmq.common.constant.LoggerName;
+import org.apache.rocketmq.logging.InternalLogger;
+import org.apache.rocketmq.logging.InternalLoggerFactory;
+import org.apache.rocketmq.filter.util.BitsArray;
+import org.apache.rocketmq.store.CommitLogDispatcher;
+import org.apache.rocketmq.store.DispatchRequest;
+
+import java.util.Collection;
+import java.util.Iterator;
+
+/**
+ * Calculate bit map of filter.
+ */
+public class CommitLogDispatcherCalcBitMap implements CommitLogDispatcher {
+
+<span class="fc" id="L37">    private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.FILTER_LOGGER_NAME);</span>
+
+    protected final BrokerConfig brokerConfig;
+    protected final ConsumerFilterManager consumerFilterManager;
+
+<span class="fc" id="L42">    public CommitLogDispatcherCalcBitMap(BrokerConfig brokerConfig, ConsumerFilterManager consumerFilterManager) {</span>
+<span class="fc" id="L43">        this.brokerConfig = brokerConfig;</span>
+<span class="fc" id="L44">        this.consumerFilterManager = consumerFilterManager;</span>
+<span class="fc" id="L45">    }</span>
+
+    @Override
+    public void dispatch(DispatchRequest request) {
+<span class="pc bpc" id="L49" title="1 of 2 branches missed.">        if (!this.brokerConfig.isEnableCalcFilterBitMap()) {</span>
+<span class="nc" id="L50">            return;</span>
+        }
+
+        try {
+
+<span class="fc" id="L55">            Collection&lt;ConsumerFilterData&gt; filterDatas = consumerFilterManager.get(request.getTopic());</span>
+
+<span class="pc bpc" id="L57" title="1 of 4 branches missed.">            if (filterDatas == null || filterDatas.isEmpty()) {</span>
+<span class="fc" id="L58">                return;</span>
+            }
+
+<span class="fc" id="L61">            Iterator&lt;ConsumerFilterData&gt; iterator = filterDatas.iterator();</span>
+<span class="fc" id="L62">            BitsArray filterBitMap = BitsArray.create(</span>
+<span class="fc" id="L63">                this.consumerFilterManager.getBloomFilter().getM()</span>
+            );
+
+<span class="fc" id="L66">            long startTime = System.currentTimeMillis();</span>
+<span class="fc bfc" id="L67" title="All 2 branches covered.">            while (iterator.hasNext()) {</span>
+<span class="fc" id="L68">                ConsumerFilterData filterData = iterator.next();</span>
+
+<span class="fc bfc" id="L70" title="All 2 branches covered.">                if (filterData.getCompiledExpression() == null) {</span>
+<span class="fc" id="L71">                    log.error(&quot;[BUG] Consumer in filter manager has no compiled expression! {}&quot;, filterData);</span>
+<span class="fc" id="L72">                    continue;</span>
+                }
+
+<span class="fc bfc" id="L75" title="All 2 branches covered.">                if (filterData.getBloomFilterData() == null) {</span>
+<span class="fc" id="L76">                    log.error(&quot;[BUG] Consumer in filter manager has no bloom data! {}&quot;, filterData);</span>
+<span class="fc" id="L77">                    continue;</span>
+                }
+
+<span class="fc" id="L80">                Object ret = null;</span>
+                try {
+<span class="fc" id="L82">                    MessageEvaluationContext context = new MessageEvaluationContext(request.getPropertiesMap());</span>
+
+<span class="fc" id="L84">                    ret = filterData.getCompiledExpression().evaluate(context);</span>
+<span class="nc" id="L85">                } catch (Throwable e) {</span>
+<span class="nc" id="L86">                    log.error(&quot;Calc filter bit map error!commitLogOffset={}, consumer={}, {}&quot;, request.getCommitLogOffset(), filterData, e);</span>
+<span class="fc" id="L87">                }</span>
+
+<span class="fc" id="L89">                log.debug(&quot;Result of Calc bit map:ret={}, data={}, props={}, offset={}&quot;, ret, filterData, request.getPropertiesMap(), request.getCommitLogOffset());</span>
+
+                // eval true
+<span class="pc bpc" id="L92" title="2 of 6 branches missed.">                if (ret != null &amp;&amp; ret instanceof Boolean &amp;&amp; (Boolean) ret) {</span>
+<span class="fc" id="L93">                    consumerFilterManager.getBloomFilter().hashTo(</span>
+<span class="fc" id="L94">                        filterData.getBloomFilterData(),</span>
+                        filterBitMap
+                    );
+                }
+<span class="fc" id="L98">            }</span>
+
+<span class="fc" id="L100">            request.setBitMap(filterBitMap.bytes());</span>
+
+<span class="fc" id="L102">            long elapsedTime = UtilAll.computeElapsedTimeMilliseconds(startTime);</span>
+            // 1ms
+<span class="fc bfc" id="L104" title="All 2 branches covered.">            if (elapsedTime &gt;= 1) {</span>
+<span class="fc" id="L105">                log.warn(&quot;Spend {} ms to calc bit map, consumerNum={}, topic={}&quot;, elapsedTime, filterDatas.size(), request.getTopic());</span>
+            }
+<span class="nc" id="L107">        } catch (Throwable e) {</span>
+<span class="nc" id="L108">            log.error(&quot;Calc bit map error! topic={}, offset={}, queueId={}, {}&quot;, request.getTopic(), request.getCommitLogOffset(), request.getQueueId(), e);</span>
+<span class="fc" id="L109">        }</span>
+<span class="fc" id="L110">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.5.201910111838</span></div></body></html>

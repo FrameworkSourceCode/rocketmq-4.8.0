@@ -1,0 +1,268 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>EndTransactionProcessor.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">rocketmq-broker 4.8.0</a> &gt; <a href="index.source.html" class="el_package">org.apache.rocketmq.broker.processor</a> &gt; <span class="el_source">EndTransactionProcessor.java</span></div><h1>EndTransactionProcessor.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.rocketmq.broker.processor;
+
+import io.netty.channel.ChannelHandlerContext;
+import org.apache.rocketmq.broker.BrokerController;
+import org.apache.rocketmq.broker.transaction.OperationResult;
+import org.apache.rocketmq.common.TopicFilterType;
+import org.apache.rocketmq.common.constant.LoggerName;
+import org.apache.rocketmq.common.message.MessageAccessor;
+import org.apache.rocketmq.common.message.MessageConst;
+import org.apache.rocketmq.common.message.MessageDecoder;
+import org.apache.rocketmq.common.message.MessageExt;
+import org.apache.rocketmq.common.protocol.ResponseCode;
+import org.apache.rocketmq.common.protocol.header.EndTransactionRequestHeader;
+import org.apache.rocketmq.common.sysflag.MessageSysFlag;
+import org.apache.rocketmq.logging.InternalLogger;
+import org.apache.rocketmq.logging.InternalLoggerFactory;
+import org.apache.rocketmq.remoting.common.RemotingHelper;
+import org.apache.rocketmq.remoting.exception.RemotingCommandException;
+import org.apache.rocketmq.remoting.netty.AsyncNettyRequestProcessor;
+import org.apache.rocketmq.remoting.netty.NettyRequestProcessor;
+import org.apache.rocketmq.remoting.protocol.RemotingCommand;
+import org.apache.rocketmq.store.MessageExtBrokerInner;
+import org.apache.rocketmq.store.PutMessageResult;
+import org.apache.rocketmq.store.config.BrokerRole;
+
+/**
+ * EndTransaction processor: process commit and rollback message
+ */
+public class EndTransactionProcessor extends AsyncNettyRequestProcessor implements NettyRequestProcessor {
+<span class="fc" id="L46">    private static final InternalLogger LOGGER = InternalLoggerFactory.getLogger(LoggerName.TRANSACTION_LOGGER_NAME);</span>
+    private final BrokerController brokerController;
+
+<span class="fc" id="L49">    public EndTransactionProcessor(final BrokerController brokerController) {</span>
+<span class="fc" id="L50">        this.brokerController = brokerController;</span>
+<span class="fc" id="L51">    }</span>
+
+    @Override
+    public RemotingCommand processRequest(ChannelHandlerContext ctx, RemotingCommand request) throws
+        RemotingCommandException {
+<span class="fc" id="L56">        final RemotingCommand response = RemotingCommand.createResponseCommand(null);</span>
+<span class="fc" id="L57">        final EndTransactionRequestHeader requestHeader =</span>
+<span class="fc" id="L58">            (EndTransactionRequestHeader)request.decodeCommandCustomHeader(EndTransactionRequestHeader.class);</span>
+<span class="fc" id="L59">        LOGGER.debug(&quot;Transaction request:{}&quot;, requestHeader);</span>
+<span class="pc bpc" id="L60" title="1 of 2 branches missed.">        if (BrokerRole.SLAVE == brokerController.getMessageStoreConfig().getBrokerRole()) {</span>
+<span class="nc" id="L61">            response.setCode(ResponseCode.SLAVE_NOT_AVAILABLE);</span>
+<span class="nc" id="L62">            LOGGER.warn(&quot;Message store is slave mode, so end transaction is forbidden. &quot;);</span>
+<span class="nc" id="L63">            return response;</span>
+        }
+
+<span class="fc bfc" id="L66" title="All 2 branches covered.">        if (requestHeader.getFromTransactionCheck()) {</span>
+<span class="pc bpc" id="L67" title="1 of 4 branches missed.">            switch (requestHeader.getCommitOrRollback()) {</span>
+                case MessageSysFlag.TRANSACTION_NOT_TYPE: {
+<span class="fc" id="L69">                    LOGGER.warn(&quot;Check producer[{}] transaction state, but it's pending status.&quot;</span>
+                            + &quot;RequestHeader: {} Remark: {}&quot;,
+<span class="fc" id="L71">                        RemotingHelper.parseChannelRemoteAddr(ctx.channel()),</span>
+<span class="fc" id="L72">                        requestHeader.toString(),</span>
+<span class="fc" id="L73">                        request.getRemark());</span>
+<span class="fc" id="L74">                    return null;</span>
+                }
+
+                case MessageSysFlag.TRANSACTION_COMMIT_TYPE: {
+<span class="fc" id="L78">                    LOGGER.warn(&quot;Check producer[{}] transaction state, the producer commit the message.&quot;</span>
+                            + &quot;RequestHeader: {} Remark: {}&quot;,
+<span class="fc" id="L80">                        RemotingHelper.parseChannelRemoteAddr(ctx.channel()),</span>
+<span class="fc" id="L81">                        requestHeader.toString(),</span>
+<span class="fc" id="L82">                        request.getRemark());</span>
+
+<span class="fc" id="L84">                    break;</span>
+                }
+
+                case MessageSysFlag.TRANSACTION_ROLLBACK_TYPE: {
+<span class="fc" id="L88">                    LOGGER.warn(&quot;Check producer[{}] transaction state, the producer rollback the message.&quot;</span>
+                            + &quot;RequestHeader: {} Remark: {}&quot;,
+<span class="fc" id="L90">                        RemotingHelper.parseChannelRemoteAddr(ctx.channel()),</span>
+<span class="fc" id="L91">                        requestHeader.toString(),</span>
+<span class="fc" id="L92">                        request.getRemark());</span>
+<span class="fc" id="L93">                    break;</span>
+                }
+                default:
+<span class="nc" id="L96">                    return null;</span>
+            }
+        } else {
+<span class="pc bpc" id="L99" title="3 of 4 branches missed.">            switch (requestHeader.getCommitOrRollback()) {</span>
+                case MessageSysFlag.TRANSACTION_NOT_TYPE: {
+<span class="nc" id="L101">                    LOGGER.warn(&quot;The producer[{}] end transaction in sending message,  and it's pending status.&quot;</span>
+                            + &quot;RequestHeader: {} Remark: {}&quot;,
+<span class="nc" id="L103">                        RemotingHelper.parseChannelRemoteAddr(ctx.channel()),</span>
+<span class="nc" id="L104">                        requestHeader.toString(),</span>
+<span class="nc" id="L105">                        request.getRemark());</span>
+<span class="nc" id="L106">                    return null;</span>
+                }
+
+                case MessageSysFlag.TRANSACTION_COMMIT_TYPE: {
+<span class="fc" id="L110">                    break;</span>
+                }
+
+                case MessageSysFlag.TRANSACTION_ROLLBACK_TYPE: {
+<span class="nc" id="L114">                    LOGGER.warn(&quot;The producer[{}] end transaction in sending message, rollback the message.&quot;</span>
+                            + &quot;RequestHeader: {} Remark: {}&quot;,
+<span class="nc" id="L116">                        RemotingHelper.parseChannelRemoteAddr(ctx.channel()),</span>
+<span class="nc" id="L117">                        requestHeader.toString(),</span>
+<span class="nc" id="L118">                        request.getRemark());</span>
+<span class="nc" id="L119">                    break;</span>
+                }
+                default:
+<span class="nc" id="L122">                    return null;</span>
+            }
+        }
+<span class="fc" id="L125">        OperationResult result = new OperationResult();</span>
+<span class="fc bfc" id="L126" title="All 2 branches covered.">        if (MessageSysFlag.TRANSACTION_COMMIT_TYPE == requestHeader.getCommitOrRollback()) {</span>
+<span class="fc" id="L127">            result = this.brokerController.getTransactionalMessageService().commitMessage(requestHeader);</span>
+<span class="pc bpc" id="L128" title="1 of 2 branches missed.">            if (result.getResponseCode() == ResponseCode.SUCCESS) {</span>
+<span class="fc" id="L129">                RemotingCommand res = checkPrepareMessage(result.getPrepareMessage(), requestHeader);</span>
+<span class="pc bpc" id="L130" title="1 of 2 branches missed.">                if (res.getCode() == ResponseCode.SUCCESS) {</span>
+<span class="fc" id="L131">                    MessageExtBrokerInner msgInner = endMessageTransaction(result.getPrepareMessage());</span>
+<span class="fc" id="L132">                    msgInner.setSysFlag(MessageSysFlag.resetTransactionValue(msgInner.getSysFlag(), requestHeader.getCommitOrRollback()));</span>
+<span class="fc" id="L133">                    msgInner.setQueueOffset(requestHeader.getTranStateTableOffset());</span>
+<span class="fc" id="L134">                    msgInner.setPreparedTransactionOffset(requestHeader.getCommitLogOffset());</span>
+<span class="fc" id="L135">                    msgInner.setStoreTimestamp(result.getPrepareMessage().getStoreTimestamp());</span>
+<span class="fc" id="L136">                    MessageAccessor.clearProperty(msgInner, MessageConst.PROPERTY_TRANSACTION_PREPARED);</span>
+<span class="fc" id="L137">                    RemotingCommand sendResult = sendFinalMessage(msgInner);</span>
+<span class="pc bpc" id="L138" title="1 of 2 branches missed.">                    if (sendResult.getCode() == ResponseCode.SUCCESS) {</span>
+<span class="fc" id="L139">                        this.brokerController.getTransactionalMessageService().deletePrepareMessage(result.getPrepareMessage());</span>
+                    }
+<span class="fc" id="L141">                    return sendResult;</span>
+                }
+<span class="nc" id="L143">                return res;</span>
+            }
+<span class="pc bpc" id="L145" title="1 of 2 branches missed.">        } else if (MessageSysFlag.TRANSACTION_ROLLBACK_TYPE == requestHeader.getCommitOrRollback()) {</span>
+<span class="fc" id="L146">            result = this.brokerController.getTransactionalMessageService().rollbackMessage(requestHeader);</span>
+<span class="pc bpc" id="L147" title="1 of 2 branches missed.">            if (result.getResponseCode() == ResponseCode.SUCCESS) {</span>
+<span class="fc" id="L148">                RemotingCommand res = checkPrepareMessage(result.getPrepareMessage(), requestHeader);</span>
+<span class="pc bpc" id="L149" title="1 of 2 branches missed.">                if (res.getCode() == ResponseCode.SUCCESS) {</span>
+<span class="fc" id="L150">                    this.brokerController.getTransactionalMessageService().deletePrepareMessage(result.getPrepareMessage());</span>
+                }
+<span class="fc" id="L152">                return res;</span>
+            }
+        }
+<span class="nc" id="L155">        response.setCode(result.getResponseCode());</span>
+<span class="nc" id="L156">        response.setRemark(result.getResponseRemark());</span>
+<span class="nc" id="L157">        return response;</span>
+    }
+
+    @Override
+    public boolean rejectRequest() {
+<span class="nc" id="L162">        return false;</span>
+    }
+
+    private RemotingCommand checkPrepareMessage(MessageExt msgExt, EndTransactionRequestHeader requestHeader) {
+<span class="fc" id="L166">        final RemotingCommand response = RemotingCommand.createResponseCommand(null);</span>
+<span class="pc bpc" id="L167" title="1 of 2 branches missed.">        if (msgExt != null) {</span>
+<span class="fc" id="L168">            final String pgroupRead = msgExt.getProperty(MessageConst.PROPERTY_PRODUCER_GROUP);</span>
+<span class="pc bpc" id="L169" title="1 of 2 branches missed.">            if (!pgroupRead.equals(requestHeader.getProducerGroup())) {</span>
+<span class="nc" id="L170">                response.setCode(ResponseCode.SYSTEM_ERROR);</span>
+<span class="nc" id="L171">                response.setRemark(&quot;The producer group wrong&quot;);</span>
+<span class="nc" id="L172">                return response;</span>
+            }
+
+<span class="pc bpc" id="L175" title="1 of 2 branches missed.">            if (msgExt.getQueueOffset() != requestHeader.getTranStateTableOffset()) {</span>
+<span class="nc" id="L176">                response.setCode(ResponseCode.SYSTEM_ERROR);</span>
+<span class="nc" id="L177">                response.setRemark(&quot;The transaction state table offset wrong&quot;);</span>
+<span class="nc" id="L178">                return response;</span>
+            }
+
+<span class="pc bpc" id="L181" title="1 of 2 branches missed.">            if (msgExt.getCommitLogOffset() != requestHeader.getCommitLogOffset()) {</span>
+<span class="nc" id="L182">                response.setCode(ResponseCode.SYSTEM_ERROR);</span>
+<span class="nc" id="L183">                response.setRemark(&quot;The commit log offset wrong&quot;);</span>
+<span class="nc" id="L184">                return response;</span>
+            }
+<span class="fc" id="L186">        } else {</span>
+<span class="nc" id="L187">            response.setCode(ResponseCode.SYSTEM_ERROR);</span>
+<span class="nc" id="L188">            response.setRemark(&quot;Find prepared transaction message failed&quot;);</span>
+<span class="nc" id="L189">            return response;</span>
+        }
+<span class="fc" id="L191">        response.setCode(ResponseCode.SUCCESS);</span>
+<span class="fc" id="L192">        return response;</span>
+    }
+
+    private MessageExtBrokerInner endMessageTransaction(MessageExt msgExt) {
+<span class="fc" id="L196">        MessageExtBrokerInner msgInner = new MessageExtBrokerInner();</span>
+<span class="fc" id="L197">        msgInner.setTopic(msgExt.getUserProperty(MessageConst.PROPERTY_REAL_TOPIC));</span>
+<span class="fc" id="L198">        msgInner.setQueueId(Integer.parseInt(msgExt.getUserProperty(MessageConst.PROPERTY_REAL_QUEUE_ID)));</span>
+<span class="fc" id="L199">        msgInner.setBody(msgExt.getBody());</span>
+<span class="fc" id="L200">        msgInner.setFlag(msgExt.getFlag());</span>
+<span class="fc" id="L201">        msgInner.setBornTimestamp(msgExt.getBornTimestamp());</span>
+<span class="fc" id="L202">        msgInner.setBornHost(msgExt.getBornHost());</span>
+<span class="fc" id="L203">        msgInner.setStoreHost(msgExt.getStoreHost());</span>
+<span class="fc" id="L204">        msgInner.setReconsumeTimes(msgExt.getReconsumeTimes());</span>
+<span class="fc" id="L205">        msgInner.setWaitStoreMsgOK(false);</span>
+<span class="fc" id="L206">        msgInner.setTransactionId(msgExt.getUserProperty(MessageConst.PROPERTY_UNIQ_CLIENT_MESSAGE_ID_KEYIDX));</span>
+<span class="fc" id="L207">        msgInner.setSysFlag(msgExt.getSysFlag());</span>
+<span class="fc" id="L208">        TopicFilterType topicFilterType =</span>
+<span class="pc bpc" id="L209" title="1 of 2 branches missed.">            (msgInner.getSysFlag() &amp; MessageSysFlag.MULTI_TAGS_FLAG) == MessageSysFlag.MULTI_TAGS_FLAG ? TopicFilterType.MULTI_TAG</span>
+                : TopicFilterType.SINGLE_TAG;
+<span class="fc" id="L211">        long tagsCodeValue = MessageExtBrokerInner.tagsString2tagsCode(topicFilterType, msgInner.getTags());</span>
+<span class="fc" id="L212">        msgInner.setTagsCode(tagsCodeValue);</span>
+<span class="fc" id="L213">        MessageAccessor.setProperties(msgInner, msgExt.getProperties());</span>
+<span class="fc" id="L214">        msgInner.setPropertiesString(MessageDecoder.messageProperties2String(msgExt.getProperties()));</span>
+<span class="fc" id="L215">        MessageAccessor.clearProperty(msgInner, MessageConst.PROPERTY_REAL_TOPIC);</span>
+<span class="fc" id="L216">        MessageAccessor.clearProperty(msgInner, MessageConst.PROPERTY_REAL_QUEUE_ID);</span>
+<span class="fc" id="L217">        return msgInner;</span>
+    }
+
+    private RemotingCommand sendFinalMessage(MessageExtBrokerInner msgInner) {
+<span class="fc" id="L221">        final RemotingCommand response = RemotingCommand.createResponseCommand(null);</span>
+<span class="fc" id="L222">        final PutMessageResult putMessageResult = this.brokerController.getMessageStore().putMessage(msgInner);</span>
+<span class="pc bpc" id="L223" title="1 of 2 branches missed.">        if (putMessageResult != null) {</span>
+<span class="pc bpc" id="L224" title="6 of 7 branches missed.">            switch (putMessageResult.getPutMessageStatus()) {</span>
+                // Success
+                case PUT_OK:
+                case FLUSH_DISK_TIMEOUT:
+                case FLUSH_SLAVE_TIMEOUT:
+                case SLAVE_NOT_AVAILABLE:
+<span class="fc" id="L230">                    response.setCode(ResponseCode.SUCCESS);</span>
+<span class="fc" id="L231">                    response.setRemark(null);</span>
+<span class="fc" id="L232">                    break;</span>
+                // Failed
+                case CREATE_MAPEDFILE_FAILED:
+<span class="nc" id="L235">                    response.setCode(ResponseCode.SYSTEM_ERROR);</span>
+<span class="nc" id="L236">                    response.setRemark(&quot;Create mapped file failed.&quot;);</span>
+<span class="nc" id="L237">                    break;</span>
+                case MESSAGE_ILLEGAL:
+                case PROPERTIES_SIZE_EXCEEDED:
+<span class="nc" id="L240">                    response.setCode(ResponseCode.MESSAGE_ILLEGAL);</span>
+<span class="nc" id="L241">                    response.setRemark(&quot;The message is illegal, maybe msg body or properties length not matched. msg body length limit 128k, msg properties length limit 32k.&quot;);</span>
+<span class="nc" id="L242">                    break;</span>
+                case SERVICE_NOT_AVAILABLE:
+<span class="nc" id="L244">                    response.setCode(ResponseCode.SERVICE_NOT_AVAILABLE);</span>
+<span class="nc" id="L245">                    response.setRemark(&quot;Service not available now.&quot;);</span>
+<span class="nc" id="L246">                    break;</span>
+                case OS_PAGECACHE_BUSY:
+<span class="nc" id="L248">                    response.setCode(ResponseCode.SYSTEM_ERROR);</span>
+<span class="nc" id="L249">                    response.setRemark(&quot;OS page cache busy, please try another machine&quot;);</span>
+<span class="nc" id="L250">                    break;</span>
+                case UNKNOWN_ERROR:
+<span class="nc" id="L252">                    response.setCode(ResponseCode.SYSTEM_ERROR);</span>
+<span class="nc" id="L253">                    response.setRemark(&quot;UNKNOWN_ERROR&quot;);</span>
+<span class="nc" id="L254">                    break;</span>
+                default:
+<span class="nc" id="L256">                    response.setCode(ResponseCode.SYSTEM_ERROR);</span>
+<span class="nc" id="L257">                    response.setRemark(&quot;UNKNOWN_ERROR DEFAULT&quot;);</span>
+                    break;
+            }
+<span class="fc" id="L260">            return response;</span>
+        } else {
+<span class="nc" id="L262">            response.setCode(ResponseCode.SYSTEM_ERROR);</span>
+<span class="nc" id="L263">            response.setRemark(&quot;store putMessage return null&quot;);</span>
+        }
+<span class="nc" id="L265">        return response;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.5.201910111838</span></div></body></html>

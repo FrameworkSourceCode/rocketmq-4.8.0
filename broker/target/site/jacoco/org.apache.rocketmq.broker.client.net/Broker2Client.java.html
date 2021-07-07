@@ -1,0 +1,300 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>Broker2Client.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">rocketmq-broker 4.8.0</a> &gt; <a href="index.source.html" class="el_package">org.apache.rocketmq.broker.client.net</a> &gt; <span class="el_source">Broker2Client.java</span></div><h1>Broker2Client.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.rocketmq.broker.client.net;
+
+import io.netty.channel.Channel;
+import org.apache.rocketmq.broker.BrokerController;
+import org.apache.rocketmq.broker.client.ClientChannelInfo;
+import org.apache.rocketmq.broker.client.ConsumerGroupInfo;
+import org.apache.rocketmq.common.MQVersion;
+import org.apache.rocketmq.common.TopicConfig;
+import org.apache.rocketmq.common.UtilAll;
+import org.apache.rocketmq.common.constant.LoggerName;
+import org.apache.rocketmq.common.message.MessageDecoder;
+import org.apache.rocketmq.common.message.MessageExt;
+import org.apache.rocketmq.common.message.MessageQueue;
+import org.apache.rocketmq.common.message.MessageQueueForC;
+import org.apache.rocketmq.common.protocol.RequestCode;
+import org.apache.rocketmq.common.protocol.ResponseCode;
+import org.apache.rocketmq.common.protocol.body.GetConsumerStatusBody;
+import org.apache.rocketmq.common.protocol.body.ResetOffsetBody;
+import org.apache.rocketmq.common.protocol.body.ResetOffsetBodyForC;
+import org.apache.rocketmq.common.protocol.header.CheckTransactionStateRequestHeader;
+import org.apache.rocketmq.common.protocol.header.GetConsumerStatusRequestHeader;
+import org.apache.rocketmq.common.protocol.header.NotifyConsumerIdsChangedRequestHeader;
+import org.apache.rocketmq.common.protocol.header.ResetOffsetRequestHeader;
+import org.apache.rocketmq.logging.InternalLogger;
+import org.apache.rocketmq.logging.InternalLoggerFactory;
+import org.apache.rocketmq.remoting.common.RemotingHelper;
+import org.apache.rocketmq.remoting.exception.RemotingSendRequestException;
+import org.apache.rocketmq.remoting.exception.RemotingTimeoutException;
+import org.apache.rocketmq.remoting.protocol.RemotingCommand;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Map.Entry;
+import java.util.concurrent.ConcurrentMap;
+
+<span class="pc bpc" id="L54" title="1 of 2 branches missed.">public class Broker2Client {</span>
+<span class="fc" id="L55">    private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.BROKER_LOGGER_NAME);</span>
+    private final BrokerController brokerController;
+
+<span class="fc" id="L58">    public Broker2Client(BrokerController brokerController) {</span>
+<span class="fc" id="L59">        this.brokerController = brokerController;</span>
+<span class="fc" id="L60">    }</span>
+
+    public void checkProducerTransactionState(
+        final String group,
+        final Channel channel,
+        final CheckTransactionStateRequestHeader requestHeader,
+        final MessageExt messageExt) throws Exception {
+<span class="nc" id="L67">        RemotingCommand request =</span>
+<span class="nc" id="L68">            RemotingCommand.createRequestCommand(RequestCode.CHECK_TRANSACTION_STATE, requestHeader);</span>
+<span class="nc" id="L69">        request.setBody(MessageDecoder.encode(messageExt, false));</span>
+        try {
+<span class="nc" id="L71">            this.brokerController.getRemotingServer().invokeOneway(channel, request, 10);</span>
+<span class="nc" id="L72">        } catch (Exception e) {</span>
+<span class="nc" id="L73">            log.error(&quot;Check transaction failed because invoke producer exception. group={}, msgId={}, error={}&quot;,</span>
+<span class="nc" id="L74">                    group, messageExt.getMsgId(), e.toString());</span>
+<span class="nc" id="L75">        }</span>
+<span class="nc" id="L76">    }</span>
+
+    public RemotingCommand callClient(final Channel channel,
+                                      final RemotingCommand request
+    ) throws RemotingSendRequestException, RemotingTimeoutException, InterruptedException {
+<span class="nc" id="L81">        return this.brokerController.getRemotingServer().invokeSync(channel, request, 10000);</span>
+    }
+
+    public void notifyConsumerIdsChanged(
+        final Channel channel,
+        final String consumerGroup) {
+<span class="nc bnc" id="L87" title="All 2 branches missed.">        if (null == consumerGroup) {</span>
+<span class="nc" id="L88">            log.error(&quot;notifyConsumerIdsChanged consumerGroup is null&quot;);</span>
+<span class="nc" id="L89">            return;</span>
+        }
+
+<span class="nc" id="L92">        NotifyConsumerIdsChangedRequestHeader requestHeader = new NotifyConsumerIdsChangedRequestHeader();</span>
+<span class="nc" id="L93">        requestHeader.setConsumerGroup(consumerGroup);</span>
+<span class="nc" id="L94">        RemotingCommand request =</span>
+<span class="nc" id="L95">            RemotingCommand.createRequestCommand(RequestCode.NOTIFY_CONSUMER_IDS_CHANGED, requestHeader);</span>
+
+        try {
+<span class="nc" id="L98">            this.brokerController.getRemotingServer().invokeOneway(channel, request, 10);</span>
+<span class="nc" id="L99">        } catch (Exception e) {</span>
+<span class="nc" id="L100">            log.error(&quot;notifyConsumerIdsChanged exception. group={}, error={}&quot;, consumerGroup, e.toString());</span>
+<span class="nc" id="L101">        }</span>
+<span class="nc" id="L102">    }</span>
+
+    public RemotingCommand resetOffset(String topic, String group, long timeStamp, boolean isForce) {
+<span class="nc" id="L105">        return resetOffset(topic, group, timeStamp, isForce, false);</span>
+    }
+
+    public RemotingCommand resetOffset(String topic, String group, long timeStamp, boolean isForce,
+                                       boolean isC) {
+<span class="nc" id="L110">        final RemotingCommand response = RemotingCommand.createResponseCommand(null);</span>
+
+<span class="nc" id="L112">        TopicConfig topicConfig = this.brokerController.getTopicConfigManager().selectTopicConfig(topic);</span>
+<span class="nc bnc" id="L113" title="All 2 branches missed.">        if (null == topicConfig) {</span>
+<span class="nc" id="L114">            log.error(&quot;[reset-offset] reset offset failed, no topic in this broker. topic={}&quot;, topic);</span>
+<span class="nc" id="L115">            response.setCode(ResponseCode.SYSTEM_ERROR);</span>
+<span class="nc" id="L116">            response.setRemark(&quot;[reset-offset] reset offset failed, no topic in this broker. topic=&quot; + topic);</span>
+<span class="nc" id="L117">            return response;</span>
+        }
+
+<span class="nc" id="L120">        Map&lt;MessageQueue, Long&gt; offsetTable = new HashMap&lt;MessageQueue, Long&gt;();</span>
+
+<span class="nc bnc" id="L122" title="All 2 branches missed.">        for (int i = 0; i &lt; topicConfig.getWriteQueueNums(); i++) {</span>
+<span class="nc" id="L123">            MessageQueue mq = new MessageQueue();</span>
+<span class="nc" id="L124">            mq.setBrokerName(this.brokerController.getBrokerConfig().getBrokerName());</span>
+<span class="nc" id="L125">            mq.setTopic(topic);</span>
+<span class="nc" id="L126">            mq.setQueueId(i);</span>
+
+<span class="nc" id="L128">            long consumerOffset =</span>
+<span class="nc" id="L129">                this.brokerController.getConsumerOffsetManager().queryOffset(group, topic, i);</span>
+<span class="nc bnc" id="L130" title="All 2 branches missed.">            if (-1 == consumerOffset) {</span>
+<span class="nc" id="L131">                response.setCode(ResponseCode.SYSTEM_ERROR);</span>
+<span class="nc" id="L132">                response.setRemark(String.format(&quot;THe consumer group &lt;%s&gt; not exist&quot;, group));</span>
+<span class="nc" id="L133">                return response;</span>
+            }
+
+            long timeStampOffset;
+<span class="nc bnc" id="L137" title="All 2 branches missed.">            if (timeStamp == -1) {</span>
+
+<span class="nc" id="L139">                timeStampOffset = this.brokerController.getMessageStore().getMaxOffsetInQueue(topic, i);</span>
+            } else {
+<span class="nc" id="L141">                timeStampOffset = this.brokerController.getMessageStore().getOffsetInQueueByTime(topic, i, timeStamp);</span>
+            }
+
+<span class="nc bnc" id="L144" title="All 2 branches missed.">            if (timeStampOffset &lt; 0) {</span>
+<span class="nc" id="L145">                log.warn(&quot;reset offset is invalid. topic={}, queueId={}, timeStampOffset={}&quot;, topic, i, timeStampOffset);</span>
+<span class="nc" id="L146">                timeStampOffset = 0;</span>
+            }
+
+<span class="nc bnc" id="L149" title="All 4 branches missed.">            if (isForce || timeStampOffset &lt; consumerOffset) {</span>
+<span class="nc" id="L150">                offsetTable.put(mq, timeStampOffset);</span>
+            } else {
+<span class="nc" id="L152">                offsetTable.put(mq, consumerOffset);</span>
+            }
+        }
+
+<span class="nc" id="L156">        ResetOffsetRequestHeader requestHeader = new ResetOffsetRequestHeader();</span>
+<span class="nc" id="L157">        requestHeader.setTopic(topic);</span>
+<span class="nc" id="L158">        requestHeader.setGroup(group);</span>
+<span class="nc" id="L159">        requestHeader.setTimestamp(timeStamp);</span>
+<span class="nc" id="L160">        RemotingCommand request =</span>
+<span class="nc" id="L161">            RemotingCommand.createRequestCommand(RequestCode.RESET_CONSUMER_CLIENT_OFFSET, requestHeader);</span>
+<span class="nc bnc" id="L162" title="All 2 branches missed.">        if (isC) {</span>
+            // c++ language
+<span class="nc" id="L164">            ResetOffsetBodyForC body = new ResetOffsetBodyForC();</span>
+<span class="nc" id="L165">            List&lt;MessageQueueForC&gt; offsetList = convertOffsetTable2OffsetList(offsetTable);</span>
+<span class="nc" id="L166">            body.setOffsetTable(offsetList);</span>
+<span class="nc" id="L167">            request.setBody(body.encode());</span>
+<span class="nc" id="L168">        } else {</span>
+            // other language
+<span class="nc" id="L170">            ResetOffsetBody body = new ResetOffsetBody();</span>
+<span class="nc" id="L171">            body.setOffsetTable(offsetTable);</span>
+<span class="nc" id="L172">            request.setBody(body.encode());</span>
+        }
+
+<span class="nc" id="L175">        ConsumerGroupInfo consumerGroupInfo =</span>
+<span class="nc" id="L176">            this.brokerController.getConsumerManager().getConsumerGroupInfo(group);</span>
+
+<span class="nc bnc" id="L178" title="All 4 branches missed.">        if (consumerGroupInfo != null &amp;&amp; !consumerGroupInfo.getAllChannel().isEmpty()) {</span>
+<span class="nc" id="L179">            ConcurrentMap&lt;Channel, ClientChannelInfo&gt; channelInfoTable =</span>
+<span class="nc" id="L180">                consumerGroupInfo.getChannelInfoTable();</span>
+<span class="nc bnc" id="L181" title="All 2 branches missed.">            for (Map.Entry&lt;Channel, ClientChannelInfo&gt; entry : channelInfoTable.entrySet()) {</span>
+<span class="nc" id="L182">                int version = entry.getValue().getVersion();</span>
+<span class="nc bnc" id="L183" title="All 2 branches missed.">                if (version &gt;= MQVersion.Version.V3_0_7_SNAPSHOT.ordinal()) {</span>
+                    try {
+<span class="nc" id="L185">                        this.brokerController.getRemotingServer().invokeOneway(entry.getKey(), request, 5000);</span>
+<span class="nc" id="L186">                        log.info(&quot;[reset-offset] reset offset success. topic={}, group={}, clientId={}&quot;,</span>
+<span class="nc" id="L187">                            topic, group, entry.getValue().getClientId());</span>
+<span class="nc" id="L188">                    } catch (Exception e) {</span>
+<span class="nc" id="L189">                        log.error(&quot;[reset-offset] reset offset exception. topic={}, group={} ,error={}&quot;,</span>
+<span class="nc" id="L190">                            topic, group, e.toString());</span>
+<span class="nc" id="L191">                    }</span>
+                } else {
+<span class="nc" id="L193">                    response.setCode(ResponseCode.SYSTEM_ERROR);</span>
+<span class="nc" id="L194">                    response.setRemark(&quot;the client does not support this feature. version=&quot;</span>
+<span class="nc" id="L195">                        + MQVersion.getVersionDesc(version));</span>
+<span class="nc" id="L196">                    log.warn(&quot;[reset-offset] the client does not support this feature. channel={}, version={}&quot;,</span>
+<span class="nc" id="L197">                        RemotingHelper.parseChannelRemoteAddr(entry.getKey()), MQVersion.getVersionDesc(version));</span>
+<span class="nc" id="L198">                    return response;</span>
+                }
+<span class="nc" id="L200">            }</span>
+<span class="nc" id="L201">        } else {</span>
+<span class="nc" id="L202">            String errorInfo =</span>
+<span class="nc" id="L203">                String.format(&quot;Consumer not online, so can not reset offset, Group: %s Topic: %s Timestamp: %d&quot;,</span>
+<span class="nc" id="L204">                    requestHeader.getGroup(),</span>
+<span class="nc" id="L205">                    requestHeader.getTopic(),</span>
+<span class="nc" id="L206">                    requestHeader.getTimestamp());</span>
+<span class="nc" id="L207">            log.error(errorInfo);</span>
+<span class="nc" id="L208">            response.setCode(ResponseCode.CONSUMER_NOT_ONLINE);</span>
+<span class="nc" id="L209">            response.setRemark(errorInfo);</span>
+<span class="nc" id="L210">            return response;</span>
+        }
+<span class="nc" id="L212">        response.setCode(ResponseCode.SUCCESS);</span>
+<span class="nc" id="L213">        ResetOffsetBody resBody = new ResetOffsetBody();</span>
+<span class="nc" id="L214">        resBody.setOffsetTable(offsetTable);</span>
+<span class="nc" id="L215">        response.setBody(resBody.encode());</span>
+<span class="nc" id="L216">        return response;</span>
+    }
+
+    private List&lt;MessageQueueForC&gt; convertOffsetTable2OffsetList(Map&lt;MessageQueue, Long&gt; table) {
+<span class="nc" id="L220">        List&lt;MessageQueueForC&gt; list = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L221" title="All 2 branches missed.">        for (Entry&lt;MessageQueue, Long&gt; entry : table.entrySet()) {</span>
+<span class="nc" id="L222">            MessageQueue mq = entry.getKey();</span>
+<span class="nc" id="L223">            MessageQueueForC tmp =</span>
+<span class="nc" id="L224">                new MessageQueueForC(mq.getTopic(), mq.getBrokerName(), mq.getQueueId(), entry.getValue());</span>
+<span class="nc" id="L225">            list.add(tmp);</span>
+<span class="nc" id="L226">        }</span>
+<span class="nc" id="L227">        return list;</span>
+    }
+
+    public RemotingCommand getConsumeStatus(String topic, String group, String originClientId) {
+<span class="nc" id="L231">        final RemotingCommand result = RemotingCommand.createResponseCommand(null);</span>
+
+<span class="nc" id="L233">        GetConsumerStatusRequestHeader requestHeader = new GetConsumerStatusRequestHeader();</span>
+<span class="nc" id="L234">        requestHeader.setTopic(topic);</span>
+<span class="nc" id="L235">        requestHeader.setGroup(group);</span>
+<span class="nc" id="L236">        RemotingCommand request =</span>
+<span class="nc" id="L237">            RemotingCommand.createRequestCommand(RequestCode.GET_CONSUMER_STATUS_FROM_CLIENT,</span>
+                requestHeader);
+
+<span class="nc" id="L240">        Map&lt;String, Map&lt;MessageQueue, Long&gt;&gt; consumerStatusTable =</span>
+            new HashMap&lt;String, Map&lt;MessageQueue, Long&gt;&gt;();
+<span class="nc" id="L242">        ConcurrentMap&lt;Channel, ClientChannelInfo&gt; channelInfoTable =</span>
+<span class="nc" id="L243">            this.brokerController.getConsumerManager().getConsumerGroupInfo(group).getChannelInfoTable();</span>
+<span class="nc bnc" id="L244" title="All 4 branches missed.">        if (null == channelInfoTable || channelInfoTable.isEmpty()) {</span>
+<span class="nc" id="L245">            result.setCode(ResponseCode.SYSTEM_ERROR);</span>
+<span class="nc" id="L246">            result.setRemark(String.format(&quot;No Any Consumer online in the consumer group: [%s]&quot;, group));</span>
+<span class="nc" id="L247">            return result;</span>
+        }
+
+<span class="nc bnc" id="L250" title="All 2 branches missed.">        for (Map.Entry&lt;Channel, ClientChannelInfo&gt; entry : channelInfoTable.entrySet()) {</span>
+<span class="nc" id="L251">            int version = entry.getValue().getVersion();</span>
+<span class="nc" id="L252">            String clientId = entry.getValue().getClientId();</span>
+<span class="nc bnc" id="L253" title="All 2 branches missed.">            if (version &lt; MQVersion.Version.V3_0_7_SNAPSHOT.ordinal()) {</span>
+<span class="nc" id="L254">                result.setCode(ResponseCode.SYSTEM_ERROR);</span>
+<span class="nc" id="L255">                result.setRemark(&quot;the client does not support this feature. version=&quot;</span>
+<span class="nc" id="L256">                    + MQVersion.getVersionDesc(version));</span>
+<span class="nc" id="L257">                log.warn(&quot;[get-consumer-status] the client does not support this feature. channel={}, version={}&quot;,</span>
+<span class="nc" id="L258">                    RemotingHelper.parseChannelRemoteAddr(entry.getKey()), MQVersion.getVersionDesc(version));</span>
+<span class="nc" id="L259">                return result;</span>
+<span class="nc bnc" id="L260" title="All 4 branches missed.">            } else if (UtilAll.isBlank(originClientId) || originClientId.equals(clientId)) {</span>
+                try {
+<span class="nc" id="L262">                    RemotingCommand response =</span>
+<span class="nc" id="L263">                        this.brokerController.getRemotingServer().invokeSync(entry.getKey(), request, 5000);</span>
+<span class="nc bnc" id="L264" title="All 4 branches missed.">                    assert response != null;</span>
+<span class="nc bnc" id="L265" title="All 2 branches missed.">                    switch (response.getCode()) {</span>
+                        case ResponseCode.SUCCESS: {
+<span class="nc bnc" id="L267" title="All 2 branches missed.">                            if (response.getBody() != null) {</span>
+<span class="nc" id="L268">                                GetConsumerStatusBody body =</span>
+<span class="nc" id="L269">                                    GetConsumerStatusBody.decode(response.getBody(),</span>
+                                        GetConsumerStatusBody.class);
+
+<span class="nc" id="L272">                                consumerStatusTable.put(clientId, body.getMessageQueueTable());</span>
+<span class="nc" id="L273">                                log.info(</span>
+                                    &quot;[get-consumer-status] get consumer status success. topic={}, group={}, channelRemoteAddr={}&quot;,
+                                    topic, group, clientId);
+                            }
+                        }
+                        default:
+                            break;
+                    }
+<span class="nc" id="L281">                } catch (Exception e) {</span>
+<span class="nc" id="L282">                    log.error(</span>
+                        &quot;[get-consumer-status] get consumer status exception. topic={}, group={}, error={}&quot;,
+<span class="nc" id="L284">                        topic, group, e.toString());</span>
+<span class="nc" id="L285">                }</span>
+
+<span class="nc bnc" id="L287" title="All 4 branches missed.">                if (!UtilAll.isBlank(originClientId) &amp;&amp; originClientId.equals(clientId)) {</span>
+<span class="nc" id="L288">                    break;</span>
+                }
+            }
+<span class="nc" id="L291">        }</span>
+
+<span class="nc" id="L293">        result.setCode(ResponseCode.SUCCESS);</span>
+<span class="nc" id="L294">        GetConsumerStatusBody resBody = new GetConsumerStatusBody();</span>
+<span class="nc" id="L295">        resBody.setConsumerTable(consumerStatusTable);</span>
+<span class="nc" id="L296">        result.setBody(resBody.encode());</span>
+<span class="nc" id="L297">        return result;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.5.201910111838</span></div></body></html>

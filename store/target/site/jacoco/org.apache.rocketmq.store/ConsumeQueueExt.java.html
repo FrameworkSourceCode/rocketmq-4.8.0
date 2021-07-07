@@ -1,0 +1,617 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ConsumeQueueExt.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">rocketmq-store 4.8.0</a> &gt; <a href="index.source.html" class="el_package">org.apache.rocketmq.store</a> &gt; <span class="el_source">ConsumeQueueExt.java</span></div><h1>ConsumeQueueExt.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.rocketmq.store;
+
+import org.apache.rocketmq.common.constant.LoggerName;
+import org.apache.rocketmq.logging.InternalLogger;
+import org.apache.rocketmq.logging.InternalLoggerFactory;
+
+import java.io.File;
+import java.nio.ByteBuffer;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+
+/**
+ * Extend of consume queue, to store something not important,
+ * such as message store time, filter bit map and etc.
+ * &lt;p/&gt;
+ * &lt;li&gt;1. This class is used only by {@link ConsumeQueue}&lt;/li&gt;
+ * &lt;li&gt;2. And is week reliable.&lt;/li&gt;
+ * &lt;li&gt;3. Be careful, address returned is always less than 0.&lt;/li&gt;
+ * &lt;li&gt;4. Pls keep this file small.&lt;/li&gt;
+ */
+public class ConsumeQueueExt {
+<span class="fc" id="L40">    private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.STORE_LOGGER_NAME);</span>
+
+    private final MappedFileQueue mappedFileQueue;
+    private final String topic;
+    private final int queueId;
+
+    private final String storePath;
+    private final int mappedFileSize;
+    private ByteBuffer tempContainer;
+
+    public static final int END_BLANK_DATA_LENGTH = 4;
+
+    /**
+     * Addr can not exceed this value.For compatible.
+     */
+    public static final long MAX_ADDR = Integer.MIN_VALUE - 1L;
+    public static final long MAX_REAL_OFFSET = MAX_ADDR - Long.MIN_VALUE;
+
+    /**
+     * Constructor.
+     *
+     * @param topic topic
+     * @param queueId id of queue
+     * @param storePath root dir of files to store.
+     * @param mappedFileSize file size
+     * @param bitMapLength bit map length.
+     */
+    public ConsumeQueueExt(final String topic,
+        final int queueId,
+        final String storePath,
+        final int mappedFileSize,
+<span class="fc" id="L71">        final int bitMapLength) {</span>
+
+<span class="fc" id="L73">        this.storePath = storePath;</span>
+<span class="fc" id="L74">        this.mappedFileSize = mappedFileSize;</span>
+
+<span class="fc" id="L76">        this.topic = topic;</span>
+<span class="fc" id="L77">        this.queueId = queueId;</span>
+
+<span class="fc" id="L79">        String queueDir = this.storePath</span>
+            + File.separator + topic
+            + File.separator + queueId;
+
+<span class="fc" id="L83">        this.mappedFileQueue = new MappedFileQueue(queueDir, mappedFileSize, null);</span>
+
+<span class="pc bpc" id="L85" title="1 of 2 branches missed.">        if (bitMapLength &gt; 0) {</span>
+<span class="fc" id="L86">            this.tempContainer = ByteBuffer.allocate(</span>
+                bitMapLength / Byte.SIZE
+            );
+        }
+<span class="fc" id="L90">    }</span>
+
+    /**
+     * Check whether {@code address} point to extend file.
+     * &lt;p&gt;
+     * Just test {@code address} is less than 0.
+     * &lt;/p&gt;
+     */
+    public static boolean isExtAddr(final long address) {
+<span class="fc bfc" id="L99" title="All 2 branches covered.">        return address &lt;= MAX_ADDR;</span>
+    }
+
+    /**
+     * Transform {@code address}(decorated by {@link #decorate}) to offset in mapped file.
+     * &lt;p&gt;
+     * if {@code address} is less than 0, return {@code address} - {@link java.lang.Long#MIN_VALUE};
+     * else, just return {@code address}
+     * &lt;/p&gt;
+     */
+    public long unDecorate(final long address) {
+<span class="pc bpc" id="L110" title="1 of 2 branches missed.">        if (isExtAddr(address)) {</span>
+<span class="fc" id="L111">            return address - Long.MIN_VALUE;</span>
+        }
+<span class="nc" id="L113">        return address;</span>
+    }
+
+    /**
+     * Decorate {@code offset} from mapped file, in order to distinguish with tagsCode(saved in cq originally).
+     * &lt;p&gt;
+     * if {@code offset} is greater than or equal to 0, then return {@code offset} + {@link java.lang.Long#MIN_VALUE};
+     * else, just return {@code offset}
+     * &lt;/p&gt;
+     *
+     * @return ext address(value is less than 0)
+     */
+    public long decorate(final long offset) {
+<span class="pc bpc" id="L126" title="1 of 2 branches missed.">        if (!isExtAddr(offset)) {</span>
+<span class="fc" id="L127">            return offset + Long.MIN_VALUE;</span>
+        }
+<span class="nc" id="L129">        return offset;</span>
+    }
+
+    /**
+     * Get data from buffer.
+     *
+     * @param address less than 0
+     */
+    public CqExtUnit get(final long address) {
+<span class="fc" id="L138">        CqExtUnit cqExtUnit = new CqExtUnit();</span>
+<span class="fc bfc" id="L139" title="All 2 branches covered.">        if (get(address, cqExtUnit)) {</span>
+<span class="fc" id="L140">            return cqExtUnit;</span>
+        }
+
+<span class="fc" id="L143">        return null;</span>
+    }
+
+    /**
+     * Get data from buffer, and set to {@code cqExtUnit}
+     *
+     * @param address less than 0
+     */
+    public boolean get(final long address, final CqExtUnit cqExtUnit) {
+<span class="fc bfc" id="L152" title="All 2 branches covered.">        if (!isExtAddr(address)) {</span>
+<span class="fc" id="L153">            return false;</span>
+        }
+
+<span class="fc" id="L156">        final int mappedFileSize = this.mappedFileSize;</span>
+<span class="fc" id="L157">        final long realOffset = unDecorate(address);</span>
+
+<span class="fc bfc" id="L159" title="All 2 branches covered.">        MappedFile mappedFile = this.mappedFileQueue.findMappedFileByOffset(realOffset, realOffset == 0);</span>
+<span class="pc bpc" id="L160" title="1 of 2 branches missed.">        if (mappedFile == null) {</span>
+<span class="nc" id="L161">            return false;</span>
+        }
+
+<span class="fc" id="L164">        int pos = (int) (realOffset % mappedFileSize);</span>
+
+<span class="fc" id="L166">        SelectMappedBufferResult bufferResult = mappedFile.selectMappedBuffer(pos);</span>
+<span class="pc bpc" id="L167" title="1 of 2 branches missed.">        if (bufferResult == null) {</span>
+<span class="nc" id="L168">            log.warn(&quot;[BUG] Consume queue extend unit({}) is not found!&quot;, realOffset);</span>
+<span class="nc" id="L169">            return false;</span>
+        }
+<span class="fc" id="L171">        boolean ret = false;</span>
+        try {
+<span class="fc" id="L173">            ret = cqExtUnit.read(bufferResult.getByteBuffer());</span>
+        } finally {
+<span class="fc" id="L175">            bufferResult.release();</span>
+        }
+
+<span class="fc" id="L178">        return ret;</span>
+    }
+
+    /**
+     * Save to mapped buffer of file and return address.
+     * &lt;p&gt;
+     * Be careful, this method is not thread safe.
+     * &lt;/p&gt;
+     *
+     * @return success: &lt; 0: fail: &gt;=0
+     */
+    public long put(final CqExtUnit cqExtUnit) {
+<span class="fc" id="L190">        final int retryTimes = 3;</span>
+        try {
+<span class="fc" id="L192">            int size = cqExtUnit.calcUnitSize();</span>
+<span class="pc bpc" id="L193" title="1 of 2 branches missed.">            if (size &gt; CqExtUnit.MAX_EXT_UNIT_SIZE) {</span>
+<span class="nc" id="L194">                log.error(&quot;Size of cq ext unit is greater than {}, {}&quot;, CqExtUnit.MAX_EXT_UNIT_SIZE, cqExtUnit);</span>
+<span class="nc" id="L195">                return 1;</span>
+            }
+<span class="pc bpc" id="L197" title="1 of 2 branches missed.">            if (this.mappedFileQueue.getMaxOffset() + size &gt; MAX_REAL_OFFSET) {</span>
+<span class="nc" id="L198">                log.warn(&quot;Capacity of ext is maximum!{}, {}&quot;, this.mappedFileQueue.getMaxOffset(), size);</span>
+<span class="nc" id="L199">                return 1;</span>
+            }
+            // unit size maybe change.but, the same most of the time.
+<span class="pc bpc" id="L202" title="1 of 4 branches missed.">            if (this.tempContainer == null || this.tempContainer.capacity() &lt; size) {</span>
+<span class="fc" id="L203">                this.tempContainer = ByteBuffer.allocate(size);</span>
+            }
+
+<span class="pc bpc" id="L206" title="1 of 2 branches missed.">            for (int i = 0; i &lt; retryTimes; i++) {</span>
+<span class="fc" id="L207">                MappedFile mappedFile = this.mappedFileQueue.getLastMappedFile();</span>
+
+<span class="fc bfc" id="L209" title="All 4 branches covered.">                if (mappedFile == null || mappedFile.isFull()) {</span>
+<span class="fc" id="L210">                    mappedFile = this.mappedFileQueue.getLastMappedFile(0);</span>
+                }
+
+<span class="pc bpc" id="L213" title="1 of 2 branches missed.">                if (mappedFile == null) {</span>
+<span class="nc" id="L214">                    log.error(&quot;Create mapped file when save consume queue extend, {}&quot;, cqExtUnit);</span>
+<span class="nc" id="L215">                    continue;</span>
+                }
+<span class="fc" id="L217">                final int wrotePosition = mappedFile.getWrotePosition();</span>
+<span class="fc" id="L218">                final int blankSize = this.mappedFileSize - wrotePosition - END_BLANK_DATA_LENGTH;</span>
+
+                // check whether has enough space.
+<span class="fc bfc" id="L221" title="All 2 branches covered.">                if (size &gt; blankSize) {</span>
+<span class="fc" id="L222">                    fullFillToEnd(mappedFile, wrotePosition);</span>
+<span class="fc" id="L223">                    log.info(&quot;No enough space(need:{}, has:{}) of file {}, so fill to end&quot;,</span>
+<span class="fc" id="L224">                        size, blankSize, mappedFile.getFileName());</span>
+<span class="fc" id="L225">                    continue;</span>
+                }
+
+<span class="pc bpc" id="L228" title="1 of 2 branches missed.">                if (mappedFile.appendMessage(cqExtUnit.write(this.tempContainer), 0, size)) {</span>
+<span class="fc" id="L229">                    return decorate(wrotePosition + mappedFile.getFileFromOffset());</span>
+                }
+            }
+<span class="nc" id="L232">        } catch (Throwable e) {</span>
+<span class="nc" id="L233">            log.error(&quot;Save consume queue extend error, &quot; + cqExtUnit, e);</span>
+<span class="nc" id="L234">        }</span>
+
+<span class="nc" id="L236">        return 1;</span>
+    }
+
+    protected void fullFillToEnd(final MappedFile mappedFile, final int wrotePosition) {
+<span class="fc" id="L240">        ByteBuffer mappedFileBuffer = mappedFile.sliceByteBuffer();</span>
+<span class="fc" id="L241">        mappedFileBuffer.position(wrotePosition);</span>
+
+        // ending.
+<span class="fc" id="L244">        mappedFileBuffer.putShort((short) -1);</span>
+
+<span class="fc" id="L246">        mappedFile.setWrotePosition(this.mappedFileSize);</span>
+<span class="fc" id="L247">    }</span>
+
+    /**
+     * Load data from file when startup.
+     */
+    public boolean load() {
+<span class="fc" id="L253">        boolean result = this.mappedFileQueue.load();</span>
+<span class="pc bpc" id="L254" title="1 of 2 branches missed.">        log.info(&quot;load consume queue extend&quot; + this.topic + &quot;-&quot; + this.queueId + &quot; &quot; + (result ? &quot;OK&quot; : &quot;Failed&quot;));</span>
+<span class="fc" id="L255">        return result;</span>
+    }
+
+    /**
+     * Check whether the step size in mapped file queue is correct.
+     */
+    public void checkSelf() {
+<span class="nc" id="L262">        this.mappedFileQueue.checkSelf();</span>
+<span class="nc" id="L263">    }</span>
+
+    /**
+     * Recover.
+     */
+    public void recover() {
+<span class="fc" id="L269">        final List&lt;MappedFile&gt; mappedFiles = this.mappedFileQueue.getMappedFiles();</span>
+<span class="pc bpc" id="L270" title="2 of 4 branches missed.">        if (mappedFiles == null || mappedFiles.isEmpty()) {</span>
+<span class="nc" id="L271">            return;</span>
+        }
+
+        // load all files, consume queue will truncate extend files.
+<span class="fc" id="L275">        int index = 0;</span>
+
+<span class="fc" id="L277">        MappedFile mappedFile = mappedFiles.get(index);</span>
+<span class="fc" id="L278">        ByteBuffer byteBuffer = mappedFile.sliceByteBuffer();</span>
+<span class="fc" id="L279">        long processOffset = mappedFile.getFileFromOffset();</span>
+<span class="fc" id="L280">        long mappedFileOffset = 0;</span>
+<span class="fc" id="L281">        CqExtUnit extUnit = new CqExtUnit();</span>
+        while (true) {
+<span class="fc" id="L283">            extUnit.readBySkip(byteBuffer);</span>
+
+            // check whether write sth.
+<span class="fc bfc" id="L286" title="All 2 branches covered.">            if (extUnit.getSize() &gt; 0) {</span>
+<span class="fc" id="L287">                mappedFileOffset += extUnit.getSize();</span>
+<span class="fc" id="L288">                continue;</span>
+            }
+
+<span class="fc" id="L291">            index++;</span>
+<span class="fc bfc" id="L292" title="All 2 branches covered.">            if (index &lt; mappedFiles.size()) {</span>
+<span class="fc" id="L293">                mappedFile = mappedFiles.get(index);</span>
+<span class="fc" id="L294">                byteBuffer = mappedFile.sliceByteBuffer();</span>
+<span class="fc" id="L295">                processOffset = mappedFile.getFileFromOffset();</span>
+<span class="fc" id="L296">                mappedFileOffset = 0;</span>
+<span class="fc" id="L297">                log.info(&quot;Recover next consume queue extend file, &quot; + mappedFile.getFileName());</span>
+<span class="fc" id="L298">                continue;</span>
+            }
+
+<span class="fc" id="L301">            log.info(&quot;All files of consume queue extend has been recovered over, last mapped file &quot;</span>
+<span class="fc" id="L302">                + mappedFile.getFileName());</span>
+<span class="fc" id="L303">            break;</span>
+        }
+
+<span class="fc" id="L306">        processOffset += mappedFileOffset;</span>
+<span class="fc" id="L307">        this.mappedFileQueue.setFlushedWhere(processOffset);</span>
+<span class="fc" id="L308">        this.mappedFileQueue.setCommittedWhere(processOffset);</span>
+<span class="fc" id="L309">        this.mappedFileQueue.truncateDirtyFiles(processOffset);</span>
+<span class="fc" id="L310">    }</span>
+
+    /**
+     * Delete files before {@code minAddress}.
+     *
+     * @param minAddress less than 0
+     */
+    public void truncateByMinAddress(final long minAddress) {
+<span class="pc bpc" id="L318" title="1 of 2 branches missed.">        if (!isExtAddr(minAddress)) {</span>
+<span class="nc" id="L319">            return;</span>
+        }
+
+<span class="fc" id="L322">        log.info(&quot;Truncate consume queue ext by min {}.&quot;, minAddress);</span>
+
+<span class="fc" id="L324">        List&lt;MappedFile&gt; willRemoveFiles = new ArrayList&lt;MappedFile&gt;();</span>
+
+<span class="fc" id="L326">        List&lt;MappedFile&gt; mappedFiles = this.mappedFileQueue.getMappedFiles();</span>
+<span class="fc" id="L327">        final long realOffset = unDecorate(minAddress);</span>
+
+<span class="fc bfc" id="L329" title="All 2 branches covered.">        for (MappedFile file : mappedFiles) {</span>
+<span class="fc" id="L330">            long fileTailOffset = file.getFileFromOffset() + this.mappedFileSize;</span>
+
+<span class="fc bfc" id="L332" title="All 2 branches covered.">            if (fileTailOffset &lt; realOffset) {</span>
+<span class="fc" id="L333">                log.info(&quot;Destroy consume queue ext by min: file={}, fileTailOffset={}, minOffset={}&quot;, file.getFileName(),</span>
+<span class="fc" id="L334">                    fileTailOffset, realOffset);</span>
+<span class="pc bpc" id="L335" title="1 of 2 branches missed.">                if (file.destroy(1000)) {</span>
+<span class="fc" id="L336">                    willRemoveFiles.add(file);</span>
+                }
+            }
+<span class="fc" id="L339">        }</span>
+
+<span class="fc" id="L341">        this.mappedFileQueue.deleteExpiredFile(willRemoveFiles);</span>
+<span class="fc" id="L342">    }</span>
+
+    /**
+     * Delete files after {@code maxAddress}, and reset wrote/commit/flush position to last file.
+     *
+     * @param maxAddress less than 0
+     */
+    public void truncateByMaxAddress(final long maxAddress) {
+<span class="pc bpc" id="L350" title="1 of 2 branches missed.">        if (!isExtAddr(maxAddress)) {</span>
+<span class="nc" id="L351">            return;</span>
+        }
+
+<span class="fc" id="L354">        log.info(&quot;Truncate consume queue ext by max {}.&quot;, maxAddress);</span>
+
+<span class="fc" id="L356">        CqExtUnit cqExtUnit = get(maxAddress);</span>
+<span class="pc bpc" id="L357" title="1 of 2 branches missed.">        if (cqExtUnit == null) {</span>
+<span class="nc" id="L358">            log.error(&quot;[BUG] address {} of consume queue extend not found!&quot;, maxAddress);</span>
+<span class="nc" id="L359">            return;</span>
+        }
+
+<span class="fc" id="L362">        final long realOffset = unDecorate(maxAddress);</span>
+
+<span class="fc" id="L364">        this.mappedFileQueue.truncateDirtyFiles(realOffset + cqExtUnit.getSize());</span>
+<span class="fc" id="L365">    }</span>
+
+    /**
+     * flush buffer to file.
+     */
+    public boolean flush(final int flushLeastPages) {
+<span class="fc" id="L371">        return this.mappedFileQueue.flush(flushLeastPages);</span>
+    }
+
+    /**
+     * delete files and directory.
+     */
+    public void destroy() {
+<span class="fc" id="L378">        this.mappedFileQueue.destroy();</span>
+<span class="fc" id="L379">    }</span>
+
+    /**
+     * Max address(value is less than 0).
+     * &lt;p/&gt;
+     * &lt;p&gt;
+     * Be careful: it's an address just when invoking this method.
+     * &lt;/p&gt;
+     */
+    public long getMaxAddress() {
+<span class="fc" id="L389">        MappedFile mappedFile = this.mappedFileQueue.getLastMappedFile();</span>
+<span class="pc bpc" id="L390" title="1 of 2 branches missed.">        if (mappedFile == null) {</span>
+<span class="nc" id="L391">            return decorate(0);</span>
+        }
+<span class="fc" id="L393">        return decorate(mappedFile.getFileFromOffset() + mappedFile.getWrotePosition());</span>
+    }
+
+    /**
+     * Minus address saved in file.
+     */
+    public long getMinAddress() {
+<span class="fc" id="L400">        MappedFile firstFile = this.mappedFileQueue.getFirstMappedFile();</span>
+<span class="pc bpc" id="L401" title="1 of 2 branches missed.">        if (firstFile == null) {</span>
+<span class="nc" id="L402">            return decorate(0);</span>
+        }
+<span class="fc" id="L404">        return decorate(firstFile.getFileFromOffset());</span>
+    }
+
+    /**
+     * Store unit.
+     */
+    public static class CqExtUnit {
+        public static final short MIN_EXT_UNIT_SIZE
+            = 2 * 1 // size, 32k max
+            + 8 * 2 // msg time + tagCode
+            + 2; // bitMapSize
+
+        public static final int MAX_EXT_UNIT_SIZE = Short.MAX_VALUE;
+
+<span class="fc" id="L418">        public CqExtUnit() {</span>
+<span class="fc" id="L419">        }</span>
+
+<span class="nc" id="L421">        public CqExtUnit(Long tagsCode, long msgStoreTime, byte[] filterBitMap) {</span>
+<span class="nc bnc" id="L422" title="All 2 branches missed.">            this.tagsCode = tagsCode == null ? 0 : tagsCode;</span>
+<span class="nc" id="L423">            this.msgStoreTime = msgStoreTime;</span>
+<span class="nc" id="L424">            this.filterBitMap = filterBitMap;</span>
+<span class="nc bnc" id="L425" title="All 2 branches missed.">            this.bitMapSize = (short) (filterBitMap == null ? 0 : filterBitMap.length);</span>
+<span class="nc" id="L426">            this.size = (short) (MIN_EXT_UNIT_SIZE + this.bitMapSize);</span>
+<span class="nc" id="L427">        }</span>
+
+        /**
+         * unit size
+         */
+        private short size;
+        /**
+         * has code of tags
+         */
+        private long tagsCode;
+        /**
+         * the time to store into commit log of message
+         */
+        private long msgStoreTime;
+        /**
+         * size of bit map
+         */
+        private short bitMapSize;
+        /**
+         * filter bit map
+         */
+        private byte[] filterBitMap;
+
+        /**
+         * build unit from buffer from current position.
+         */
+        private boolean read(final ByteBuffer buffer) {
+<span class="pc bpc" id="L454" title="1 of 2 branches missed.">            if (buffer.position() + 2 &gt; buffer.limit()) {</span>
+<span class="nc" id="L455">                return false;</span>
+            }
+
+<span class="fc" id="L458">            this.size = buffer.getShort();</span>
+
+<span class="fc bfc" id="L460" title="All 2 branches covered.">            if (this.size &lt; 1) {</span>
+<span class="fc" id="L461">                return false;</span>
+            }
+
+<span class="fc" id="L464">            this.tagsCode = buffer.getLong();</span>
+<span class="fc" id="L465">            this.msgStoreTime = buffer.getLong();</span>
+<span class="fc" id="L466">            this.bitMapSize = buffer.getShort();</span>
+
+<span class="fc bfc" id="L468" title="All 2 branches covered.">            if (this.bitMapSize &lt; 1) {</span>
+<span class="fc" id="L469">                return true;</span>
+            }
+
+<span class="pc bpc" id="L472" title="1 of 4 branches missed.">            if (this.filterBitMap == null || this.filterBitMap.length != this.bitMapSize) {</span>
+<span class="fc" id="L473">                this.filterBitMap = new byte[bitMapSize];</span>
+            }
+
+<span class="fc" id="L476">            buffer.get(this.filterBitMap);</span>
+<span class="fc" id="L477">            return true;</span>
+        }
+
+        /**
+         * Only read first 2 byte to get unit size.
+         * &lt;p&gt;
+         * if size &gt; 0, then skip buffer position with size.
+         * &lt;/p&gt;
+         * &lt;p&gt;
+         * if size &lt;= 0, nothing to do.
+         * &lt;/p&gt;
+         */
+        private void readBySkip(final ByteBuffer buffer) {
+<span class="fc" id="L490">            ByteBuffer temp = buffer.slice();</span>
+
+<span class="fc" id="L492">            short tempSize = temp.getShort();</span>
+<span class="fc" id="L493">            this.size = tempSize;</span>
+
+<span class="fc bfc" id="L495" title="All 2 branches covered.">            if (tempSize &gt; 0) {</span>
+<span class="fc" id="L496">                buffer.position(buffer.position() + this.size);</span>
+            }
+<span class="fc" id="L498">        }</span>
+
+        /**
+         * Transform unit data to byte array.
+         * &lt;p/&gt;
+         * &lt;li&gt;1. @{code container} can be null, it will be created if null.&lt;/li&gt;
+         * &lt;li&gt;2. if capacity of @{code container} is less than unit size, it will be created also.&lt;/li&gt;
+         * &lt;li&gt;3. Pls be sure that size of unit is not greater than {@link #MAX_EXT_UNIT_SIZE}&lt;/li&gt;
+         */
+        private byte[] write(final ByteBuffer container) {
+<span class="fc bfc" id="L508" title="All 2 branches covered.">            this.bitMapSize = (short) (filterBitMap == null ? 0 : filterBitMap.length);</span>
+<span class="fc" id="L509">            this.size = (short) (MIN_EXT_UNIT_SIZE + this.bitMapSize);</span>
+
+<span class="fc" id="L511">            ByteBuffer temp = container;</span>
+
+<span class="pc bpc" id="L513" title="2 of 4 branches missed.">            if (temp == null || temp.capacity() &lt; this.size) {</span>
+<span class="nc" id="L514">                temp = ByteBuffer.allocate(this.size);</span>
+            }
+
+<span class="fc" id="L517">            temp.flip();</span>
+<span class="fc" id="L518">            temp.limit(this.size);</span>
+
+<span class="fc" id="L520">            temp.putShort(this.size);</span>
+<span class="fc" id="L521">            temp.putLong(this.tagsCode);</span>
+<span class="fc" id="L522">            temp.putLong(this.msgStoreTime);</span>
+<span class="fc" id="L523">            temp.putShort(this.bitMapSize);</span>
+<span class="fc bfc" id="L524" title="All 2 branches covered.">            if (this.bitMapSize &gt; 0) {</span>
+<span class="fc" id="L525">                temp.put(this.filterBitMap);</span>
+            }
+
+<span class="fc" id="L528">            return temp.array();</span>
+        }
+
+        /**
+         * Calculate unit size by current data.
+         */
+        private int calcUnitSize() {
+<span class="fc bfc" id="L535" title="All 2 branches covered.">            int sizeTemp = MIN_EXT_UNIT_SIZE + (filterBitMap == null ? 0 : filterBitMap.length);</span>
+<span class="fc" id="L536">            return sizeTemp;</span>
+        }
+
+        public long getTagsCode() {
+<span class="fc" id="L540">            return tagsCode;</span>
+        }
+
+        public void setTagsCode(final long tagsCode) {
+<span class="fc" id="L544">            this.tagsCode = tagsCode;</span>
+<span class="fc" id="L545">        }</span>
+
+        public long getMsgStoreTime() {
+<span class="fc" id="L548">            return msgStoreTime;</span>
+        }
+
+        public void setMsgStoreTime(final long msgStoreTime) {
+<span class="fc" id="L552">            this.msgStoreTime = msgStoreTime;</span>
+<span class="fc" id="L553">        }</span>
+
+        public byte[] getFilterBitMap() {
+<span class="nc bnc" id="L556" title="All 2 branches missed.">            if (this.bitMapSize &lt; 1) {</span>
+<span class="nc" id="L557">                return null;</span>
+            }
+<span class="nc" id="L559">            return filterBitMap;</span>
+        }
+
+        public void setFilterBitMap(final byte[] filterBitMap) {
+<span class="fc" id="L563">            this.filterBitMap = filterBitMap;</span>
+            // not safe transform, but size will be calculate by #calcUnitSize
+<span class="fc bfc" id="L565" title="All 2 branches covered.">            this.bitMapSize = (short) (filterBitMap == null ? 0 : filterBitMap.length);</span>
+<span class="fc" id="L566">        }</span>
+
+        public short getSize() {
+<span class="fc" id="L569">            return size;</span>
+        }
+
+        @Override
+        public boolean equals(Object o) {
+<span class="pc bpc" id="L574" title="1 of 2 branches missed.">            if (this == o)</span>
+<span class="nc" id="L575">                return true;</span>
+<span class="pc bpc" id="L576" title="1 of 2 branches missed.">            if (!(o instanceof CqExtUnit))</span>
+<span class="nc" id="L577">                return false;</span>
+
+<span class="fc" id="L579">            CqExtUnit cqExtUnit = (CqExtUnit) o;</span>
+
+<span class="pc bpc" id="L581" title="1 of 2 branches missed.">            if (bitMapSize != cqExtUnit.bitMapSize)</span>
+<span class="nc" id="L582">                return false;</span>
+<span class="pc bpc" id="L583" title="1 of 2 branches missed.">            if (msgStoreTime != cqExtUnit.msgStoreTime)</span>
+<span class="nc" id="L584">                return false;</span>
+<span class="pc bpc" id="L585" title="1 of 2 branches missed.">            if (size != cqExtUnit.size)</span>
+<span class="nc" id="L586">                return false;</span>
+<span class="pc bpc" id="L587" title="1 of 2 branches missed.">            if (tagsCode != cqExtUnit.tagsCode)</span>
+<span class="nc" id="L588">                return false;</span>
+<span class="pc bpc" id="L589" title="1 of 2 branches missed.">            if (!Arrays.equals(filterBitMap, cqExtUnit.filterBitMap))</span>
+<span class="nc" id="L590">                return false;</span>
+
+<span class="fc" id="L592">            return true;</span>
+        }
+
+        @Override
+        public int hashCode() {
+<span class="nc" id="L597">            int result = (int) size;</span>
+<span class="nc" id="L598">            result = 31 * result + (int) (tagsCode ^ (tagsCode &gt;&gt;&gt; 32));</span>
+<span class="nc" id="L599">            result = 31 * result + (int) (msgStoreTime ^ (msgStoreTime &gt;&gt;&gt; 32));</span>
+<span class="nc" id="L600">            result = 31 * result + (int) bitMapSize;</span>
+<span class="nc bnc" id="L601" title="All 2 branches missed.">            result = 31 * result + (filterBitMap != null ? Arrays.hashCode(filterBitMap) : 0);</span>
+<span class="nc" id="L602">            return result;</span>
+        }
+
+        @Override
+        public String toString() {
+<span class="nc" id="L607">            return &quot;CqExtUnit{&quot; +</span>
+                &quot;size=&quot; + size +
+                &quot;, tagsCode=&quot; + tagsCode +
+                &quot;, msgStoreTime=&quot; + msgStoreTime +
+                &quot;, bitMapSize=&quot; + bitMapSize +
+<span class="nc" id="L612">                &quot;, filterBitMap=&quot; + Arrays.toString(filterBitMap) +</span>
+                '}';
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.5.201910111838</span></div></body></html>

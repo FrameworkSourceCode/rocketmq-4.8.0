@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DLedgerRoleChangeHandler.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">rocketmq-broker 4.8.0</a> &gt; <a href="index.source.html" class="el_package">org.apache.rocketmq.broker.dledger</a> &gt; <span class="el_source">DLedgerRoleChangeHandler.java</span></div><h1>DLedgerRoleChangeHandler.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.rocketmq.broker.dledger;
+
+import io.openmessaging.storage.dledger.DLedgerLeaderElector;
+import io.openmessaging.storage.dledger.DLedgerServer;
+import io.openmessaging.storage.dledger.MemberState;
+import io.openmessaging.storage.dledger.utils.DLedgerUtils;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import org.apache.rocketmq.broker.BrokerController;
+import org.apache.rocketmq.common.ThreadFactoryImpl;
+import org.apache.rocketmq.common.constant.LoggerName;
+import org.apache.rocketmq.logging.InternalLogger;
+import org.apache.rocketmq.logging.InternalLoggerFactory;
+import org.apache.rocketmq.store.DefaultMessageStore;
+import org.apache.rocketmq.store.config.BrokerRole;
+import org.apache.rocketmq.store.dledger.DLedgerCommitLog;
+
+public class DLedgerRoleChangeHandler implements DLedgerLeaderElector.RoleChangeHandler {
+
+<span class="nc" id="L36">    private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.BROKER_LOGGER_NAME);</span>
+<span class="nc" id="L37">    private ExecutorService executorService = Executors.newSingleThreadExecutor(new ThreadFactoryImpl(&quot;DLegerRoleChangeHandler_&quot;));</span>
+    private BrokerController brokerController;
+    private DefaultMessageStore messageStore;
+    private DLedgerCommitLog dLedgerCommitLog;
+    private DLedgerServer dLegerServer;
+<span class="nc" id="L42">    public DLedgerRoleChangeHandler(BrokerController brokerController, DefaultMessageStore messageStore) {</span>
+<span class="nc" id="L43">        this.brokerController = brokerController;</span>
+<span class="nc" id="L44">        this.messageStore = messageStore;</span>
+<span class="nc" id="L45">        this.dLedgerCommitLog = (DLedgerCommitLog) messageStore.getCommitLog();</span>
+<span class="nc" id="L46">        this.dLegerServer = dLedgerCommitLog.getdLedgerServer();</span>
+<span class="nc" id="L47">    }</span>
+
+    @Override public void handle(long term, MemberState.Role role) {
+<span class="nc" id="L50">        Runnable runnable = new Runnable() {</span>
+            @Override public void run() {
+<span class="nc" id="L52">                long start = System.currentTimeMillis();</span>
+                try {
+<span class="nc" id="L54">                    boolean succ = true;</span>
+<span class="nc" id="L55">                    log.info(&quot;Begin handling broker role change term={} role={} currStoreRole={}&quot;, term, role, messageStore.getMessageStoreConfig().getBrokerRole());</span>
+<span class="nc bnc" id="L56" title="All 4 branches missed.">                    switch (role) {</span>
+                        case CANDIDATE:
+<span class="nc bnc" id="L58" title="All 2 branches missed.">                            if (messageStore.getMessageStoreConfig().getBrokerRole() != BrokerRole.SLAVE) {</span>
+<span class="nc" id="L59">                                brokerController.changeToSlave(dLedgerCommitLog.getId());</span>
+                            }
+                            break;
+                        case FOLLOWER:
+<span class="nc" id="L63">                            brokerController.changeToSlave(dLedgerCommitLog.getId());</span>
+<span class="nc" id="L64">                            break;</span>
+                        case LEADER:
+                            while (true) {
+<span class="nc bnc" id="L67" title="All 2 branches missed.">                                if (!dLegerServer.getMemberState().isLeader()) {</span>
+<span class="nc" id="L68">                                    succ = false;</span>
+<span class="nc" id="L69">                                    break;</span>
+                                }
+<span class="nc bnc" id="L71" title="All 2 branches missed.">                                if (dLegerServer.getdLedgerStore().getLedgerEndIndex() == -1) {</span>
+<span class="nc" id="L72">                                    break;</span>
+                                }
+<span class="nc bnc" id="L74" title="All 2 branches missed.">                                if (dLegerServer.getdLedgerStore().getLedgerEndIndex() == dLegerServer.getdLedgerStore().getCommittedIndex()</span>
+<span class="nc bnc" id="L75" title="All 2 branches missed.">                                    &amp;&amp; messageStore.dispatchBehindBytes() == 0) {</span>
+<span class="nc" id="L76">                                    break;</span>
+                                }
+<span class="nc" id="L78">                                Thread.sleep(100);</span>
+                            }
+<span class="nc bnc" id="L80" title="All 2 branches missed.">                            if (succ) {</span>
+<span class="nc" id="L81">                                messageStore.recoverTopicQueueTable();</span>
+<span class="nc" id="L82">                                brokerController.changeToMaster(BrokerRole.SYNC_MASTER);</span>
+                            }
+                            break;
+                        default:
+                            break;
+                    }
+<span class="nc" id="L88">                    log.info(&quot;Finish handling broker role change succ={} term={} role={} currStoreRole={} cost={}&quot;, succ, term, role, messageStore.getMessageStoreConfig().getBrokerRole(), DLedgerUtils.elapsed(start));</span>
+<span class="nc" id="L89">                } catch (Throwable t) {</span>
+<span class="nc" id="L90">                    log.info(&quot;[MONITOR]Failed handling broker role change term={} role={} currStoreRole={} cost={}&quot;, term, role, messageStore.getMessageStoreConfig().getBrokerRole(), DLedgerUtils.elapsed(start), t);</span>
+<span class="nc" id="L91">                }</span>
+<span class="nc" id="L92">            }</span>
+        };
+<span class="nc" id="L94">        executorService.submit(runnable);</span>
+<span class="nc" id="L95">    }</span>
+
+    @Override public void startup() {
+
+<span class="nc" id="L99">    }</span>
+
+    @Override public void shutdown() {
+<span class="nc" id="L102">        executorService.shutdown();</span>
+<span class="nc" id="L103">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.5.201910111838</span></div></body></html>

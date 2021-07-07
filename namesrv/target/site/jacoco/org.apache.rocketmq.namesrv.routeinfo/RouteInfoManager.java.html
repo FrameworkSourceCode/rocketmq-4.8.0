@@ -1,0 +1,807 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>RouteInfoManager.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">rocketmq-namesrv 4.8.0</a> &gt; <a href="index.source.html" class="el_package">org.apache.rocketmq.namesrv.routeinfo</a> &gt; <span class="el_source">RouteInfoManager.java</span></div><h1>RouteInfoManager.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.rocketmq.namesrv.routeinfo;
+
+import io.netty.channel.Channel;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
+import java.util.Map.Entry;
+import java.util.Set;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.locks.ReadWriteLock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
+import org.apache.rocketmq.common.DataVersion;
+import org.apache.rocketmq.common.MixAll;
+import org.apache.rocketmq.common.TopicConfig;
+import org.apache.rocketmq.common.constant.LoggerName;
+import org.apache.rocketmq.common.constant.PermName;
+import org.apache.rocketmq.logging.InternalLogger;
+import org.apache.rocketmq.logging.InternalLoggerFactory;
+import org.apache.rocketmq.common.namesrv.RegisterBrokerResult;
+import org.apache.rocketmq.common.protocol.body.ClusterInfo;
+import org.apache.rocketmq.common.protocol.body.TopicConfigSerializeWrapper;
+import org.apache.rocketmq.common.protocol.body.TopicList;
+import org.apache.rocketmq.common.protocol.route.BrokerData;
+import org.apache.rocketmq.common.protocol.route.QueueData;
+import org.apache.rocketmq.common.protocol.route.TopicRouteData;
+import org.apache.rocketmq.common.sysflag.TopicSysFlag;
+import org.apache.rocketmq.remoting.common.RemotingUtil;
+
+public class RouteInfoManager {
+<span class="fc" id="L49">    private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.NAMESRV_LOGGER_NAME);</span>
+    private final static long BROKER_CHANNEL_EXPIRED_TIME = 1000 * 60 * 2;
+<span class="fc" id="L51">    private final ReadWriteLock lock = new ReentrantReadWriteLock();</span>
+    private final HashMap&lt;String/* topic */, List&lt;QueueData&gt;&gt; topicQueueTable;
+    private final HashMap&lt;String/* brokerName */, BrokerData&gt; brokerAddrTable;
+    private final HashMap&lt;String/* clusterName */, Set&lt;String/* brokerName */&gt;&gt; clusterAddrTable;
+    private final HashMap&lt;String/* brokerAddr */, BrokerLiveInfo&gt; brokerLiveTable;
+    private final HashMap&lt;String/* brokerAddr */, List&lt;String&gt;/* Filter Server */&gt; filterServerTable;
+
+<span class="fc" id="L58">    public RouteInfoManager() {</span>
+<span class="fc" id="L59">        this.topicQueueTable = new HashMap&lt;String, List&lt;QueueData&gt;&gt;(1024);</span>
+<span class="fc" id="L60">        this.brokerAddrTable = new HashMap&lt;String, BrokerData&gt;(128);</span>
+<span class="fc" id="L61">        this.clusterAddrTable = new HashMap&lt;String, Set&lt;String&gt;&gt;(32);</span>
+<span class="fc" id="L62">        this.brokerLiveTable = new HashMap&lt;String, BrokerLiveInfo&gt;(256);</span>
+<span class="fc" id="L63">        this.filterServerTable = new HashMap&lt;String, List&lt;String&gt;&gt;(256);</span>
+<span class="fc" id="L64">    }</span>
+
+    public byte[] getAllClusterInfo() {
+<span class="fc" id="L67">        ClusterInfo clusterInfoSerializeWrapper = new ClusterInfo();</span>
+<span class="fc" id="L68">        clusterInfoSerializeWrapper.setBrokerAddrTable(this.brokerAddrTable);</span>
+<span class="fc" id="L69">        clusterInfoSerializeWrapper.setClusterAddrTable(this.clusterAddrTable);</span>
+<span class="fc" id="L70">        return clusterInfoSerializeWrapper.encode();</span>
+    }
+
+    public void deleteTopic(final String topic) {
+        try {
+            try {
+<span class="nc" id="L76">                this.lock.writeLock().lockInterruptibly();</span>
+<span class="nc" id="L77">                this.topicQueueTable.remove(topic);</span>
+            } finally {
+<span class="nc" id="L79">                this.lock.writeLock().unlock();</span>
+            }
+<span class="nc" id="L81">        } catch (Exception e) {</span>
+<span class="nc" id="L82">            log.error(&quot;deleteTopic Exception&quot;, e);</span>
+<span class="nc" id="L83">        }</span>
+<span class="nc" id="L84">    }</span>
+
+    public byte[] getAllTopicList() {
+<span class="fc" id="L87">        TopicList topicList = new TopicList();</span>
+        try {
+            try {
+<span class="fc" id="L90">                this.lock.readLock().lockInterruptibly();</span>
+<span class="fc" id="L91">                topicList.getTopicList().addAll(this.topicQueueTable.keySet());</span>
+            } finally {
+<span class="fc" id="L93">                this.lock.readLock().unlock();</span>
+            }
+<span class="nc" id="L95">        } catch (Exception e) {</span>
+<span class="nc" id="L96">            log.error(&quot;getAllTopicList Exception&quot;, e);</span>
+<span class="fc" id="L97">        }</span>
+
+<span class="fc" id="L99">        return topicList.encode();</span>
+    }
+
+    public RegisterBrokerResult registerBroker(
+        final String clusterName,
+        final String brokerAddr,
+        final String brokerName,
+        final long brokerId,
+        final String haServerAddr,
+        final TopicConfigSerializeWrapper topicConfigWrapper,
+        final List&lt;String&gt; filterServerList,
+        final Channel channel) {
+<span class="fc" id="L111">        RegisterBrokerResult result = new RegisterBrokerResult();</span>
+        try {
+            try {
+<span class="fc" id="L114">                this.lock.writeLock().lockInterruptibly();</span>
+
+<span class="fc" id="L116">                Set&lt;String&gt; brokerNames = this.clusterAddrTable.get(clusterName);</span>
+<span class="fc bfc" id="L117" title="All 2 branches covered.">                if (null == brokerNames) {</span>
+<span class="fc" id="L118">                    brokerNames = new HashSet&lt;String&gt;();</span>
+<span class="fc" id="L119">                    this.clusterAddrTable.put(clusterName, brokerNames);</span>
+                }
+<span class="fc" id="L121">                brokerNames.add(brokerName);</span>
+
+<span class="fc" id="L123">                boolean registerFirst = false;</span>
+
+<span class="fc" id="L125">                BrokerData brokerData = this.brokerAddrTable.get(brokerName);</span>
+<span class="fc bfc" id="L126" title="All 2 branches covered.">                if (null == brokerData) {</span>
+<span class="fc" id="L127">                    registerFirst = true;</span>
+<span class="fc" id="L128">                    brokerData = new BrokerData(clusterName, brokerName, new HashMap&lt;Long, String&gt;());</span>
+<span class="fc" id="L129">                    this.brokerAddrTable.put(brokerName, brokerData);</span>
+                }
+<span class="fc" id="L131">                Map&lt;Long, String&gt; brokerAddrsMap = brokerData.getBrokerAddrs();</span>
+                //Switch slave to master: first remove &lt;1, IP:PORT&gt; in namesrv, then add &lt;0, IP:PORT&gt;
+                //The same IP:PORT must only have one record in brokerAddrTable
+<span class="fc" id="L134">                Iterator&lt;Entry&lt;Long, String&gt;&gt; it = brokerAddrsMap.entrySet().iterator();</span>
+<span class="fc bfc" id="L135" title="All 2 branches covered.">                while (it.hasNext()) {</span>
+<span class="fc" id="L136">                    Entry&lt;Long, String&gt; item = it.next();</span>
+<span class="pc bpc" id="L137" title="3 of 6 branches missed.">                    if (null != brokerAddr &amp;&amp; brokerAddr.equals(item.getValue()) &amp;&amp; brokerId != item.getKey()) {</span>
+<span class="nc" id="L138">                        it.remove();</span>
+                    }
+<span class="fc" id="L140">                }</span>
+
+<span class="fc" id="L142">                String oldAddr = brokerData.getBrokerAddrs().put(brokerId, brokerAddr);</span>
+<span class="pc bpc" id="L143" title="1 of 4 branches missed.">                registerFirst = registerFirst || (null == oldAddr);</span>
+
+<span class="pc bpc" id="L145" title="2 of 4 branches missed.">                if (null != topicConfigWrapper</span>
+                    &amp;&amp; MixAll.MASTER_ID == brokerId) {
+<span class="nc bnc" id="L147" title="All 4 branches missed.">                    if (this.isBrokerTopicConfigChanged(brokerAddr, topicConfigWrapper.getDataVersion())</span>
+                        || registerFirst) {
+<span class="nc" id="L149">                        ConcurrentMap&lt;String, TopicConfig&gt; tcTable =</span>
+<span class="nc" id="L150">                            topicConfigWrapper.getTopicConfigTable();</span>
+<span class="nc bnc" id="L151" title="All 2 branches missed.">                        if (tcTable != null) {</span>
+<span class="nc bnc" id="L152" title="All 2 branches missed.">                            for (Map.Entry&lt;String, TopicConfig&gt; entry : tcTable.entrySet()) {</span>
+<span class="nc" id="L153">                                this.createAndUpdateQueueData(brokerName, entry.getValue());</span>
+<span class="nc" id="L154">                            }</span>
+                        }
+                    }
+                }
+
+<span class="fc" id="L159">                BrokerLiveInfo prevBrokerLiveInfo = this.brokerLiveTable.put(brokerAddr,</span>
+                    new BrokerLiveInfo(
+<span class="fc" id="L161">                        System.currentTimeMillis(),</span>
+<span class="fc" id="L162">                        topicConfigWrapper.getDataVersion(),</span>
+                        channel,
+                        haServerAddr));
+<span class="fc bfc" id="L165" title="All 2 branches covered.">                if (null == prevBrokerLiveInfo) {</span>
+<span class="fc" id="L166">                    log.info(&quot;new broker registered, {} HAServer: {}&quot;, brokerAddr, haServerAddr);</span>
+                }
+
+<span class="pc bpc" id="L169" title="1 of 2 branches missed.">                if (filterServerList != null) {</span>
+<span class="pc bpc" id="L170" title="1 of 2 branches missed.">                    if (filterServerList.isEmpty()) {</span>
+<span class="fc" id="L171">                        this.filterServerTable.remove(brokerAddr);</span>
+                    } else {
+<span class="nc" id="L173">                        this.filterServerTable.put(brokerAddr, filterServerList);</span>
+                    }
+                }
+
+<span class="pc bpc" id="L177" title="1 of 2 branches missed.">                if (MixAll.MASTER_ID != brokerId) {</span>
+<span class="fc" id="L178">                    String masterAddr = brokerData.getBrokerAddrs().get(MixAll.MASTER_ID);</span>
+<span class="pc bpc" id="L179" title="1 of 2 branches missed.">                    if (masterAddr != null) {</span>
+<span class="nc" id="L180">                        BrokerLiveInfo brokerLiveInfo = this.brokerLiveTable.get(masterAddr);</span>
+<span class="nc bnc" id="L181" title="All 2 branches missed.">                        if (brokerLiveInfo != null) {</span>
+<span class="nc" id="L182">                            result.setHaServerAddr(brokerLiveInfo.getHaServerAddr());</span>
+<span class="nc" id="L183">                            result.setMasterAddr(masterAddr);</span>
+                        }
+                    }
+                }
+            } finally {
+<span class="fc" id="L188">                this.lock.writeLock().unlock();</span>
+            }
+<span class="nc" id="L190">        } catch (Exception e) {</span>
+<span class="nc" id="L191">            log.error(&quot;registerBroker Exception&quot;, e);</span>
+<span class="fc" id="L192">        }</span>
+
+<span class="fc" id="L194">        return result;</span>
+    }
+
+    public boolean isBrokerTopicConfigChanged(final String brokerAddr, final DataVersion dataVersion) {
+<span class="nc" id="L198">        DataVersion prev = queryBrokerTopicConfig(brokerAddr);</span>
+<span class="nc bnc" id="L199" title="All 4 branches missed.">        return null == prev || !prev.equals(dataVersion);</span>
+    }
+
+    public DataVersion queryBrokerTopicConfig(final String brokerAddr) {
+<span class="nc" id="L203">        BrokerLiveInfo prev = this.brokerLiveTable.get(brokerAddr);</span>
+<span class="nc bnc" id="L204" title="All 2 branches missed.">        if (prev != null) {</span>
+<span class="nc" id="L205">            return prev.getDataVersion();</span>
+        }
+<span class="nc" id="L207">        return null;</span>
+    }
+
+    public void updateBrokerInfoUpdateTimestamp(final String brokerAddr) {
+<span class="nc" id="L211">        BrokerLiveInfo prev = this.brokerLiveTable.get(brokerAddr);</span>
+<span class="nc bnc" id="L212" title="All 2 branches missed.">        if (prev != null) {</span>
+<span class="nc" id="L213">            prev.setLastUpdateTimestamp(System.currentTimeMillis());</span>
+        }
+<span class="nc" id="L215">    }</span>
+
+    private void createAndUpdateQueueData(final String brokerName, final TopicConfig topicConfig) {
+<span class="nc" id="L218">        QueueData queueData = new QueueData();</span>
+<span class="nc" id="L219">        queueData.setBrokerName(brokerName);</span>
+<span class="nc" id="L220">        queueData.setWriteQueueNums(topicConfig.getWriteQueueNums());</span>
+<span class="nc" id="L221">        queueData.setReadQueueNums(topicConfig.getReadQueueNums());</span>
+<span class="nc" id="L222">        queueData.setPerm(topicConfig.getPerm());</span>
+<span class="nc" id="L223">        queueData.setTopicSynFlag(topicConfig.getTopicSysFlag());</span>
+
+<span class="nc" id="L225">        List&lt;QueueData&gt; queueDataList = this.topicQueueTable.get(topicConfig.getTopicName());</span>
+<span class="nc bnc" id="L226" title="All 2 branches missed.">        if (null == queueDataList) {</span>
+<span class="nc" id="L227">            queueDataList = new LinkedList&lt;QueueData&gt;();</span>
+<span class="nc" id="L228">            queueDataList.add(queueData);</span>
+<span class="nc" id="L229">            this.topicQueueTable.put(topicConfig.getTopicName(), queueDataList);</span>
+<span class="nc" id="L230">            log.info(&quot;new topic registered, {} {}&quot;, topicConfig.getTopicName(), queueData);</span>
+        } else {
+<span class="nc" id="L232">            boolean addNewOne = true;</span>
+
+<span class="nc" id="L234">            Iterator&lt;QueueData&gt; it = queueDataList.iterator();</span>
+<span class="nc bnc" id="L235" title="All 2 branches missed.">            while (it.hasNext()) {</span>
+<span class="nc" id="L236">                QueueData qd = it.next();</span>
+<span class="nc bnc" id="L237" title="All 2 branches missed.">                if (qd.getBrokerName().equals(brokerName)) {</span>
+<span class="nc bnc" id="L238" title="All 2 branches missed.">                    if (qd.equals(queueData)) {</span>
+<span class="nc" id="L239">                        addNewOne = false;</span>
+                    } else {
+<span class="nc" id="L241">                        log.info(&quot;topic changed, {} OLD: {} NEW: {}&quot;, topicConfig.getTopicName(), qd,</span>
+                            queueData);
+<span class="nc" id="L243">                        it.remove();</span>
+                    }
+                }
+<span class="nc" id="L246">            }</span>
+
+<span class="nc bnc" id="L248" title="All 2 branches missed.">            if (addNewOne) {</span>
+<span class="nc" id="L249">                queueDataList.add(queueData);</span>
+            }
+        }
+<span class="nc" id="L252">    }</span>
+
+    public int wipeWritePermOfBrokerByLock(final String brokerName) {
+        try {
+            try {
+<span class="fc" id="L257">                this.lock.writeLock().lockInterruptibly();</span>
+<span class="fc" id="L258">                return wipeWritePermOfBroker(brokerName);</span>
+            } finally {
+<span class="fc" id="L260">                this.lock.writeLock().unlock();</span>
+            }
+<span class="nc" id="L262">        } catch (Exception e) {</span>
+<span class="nc" id="L263">            log.error(&quot;wipeWritePermOfBrokerByLock Exception&quot;, e);</span>
+        }
+
+<span class="nc" id="L266">        return 0;</span>
+    }
+
+    private int wipeWritePermOfBroker(final String brokerName) {
+<span class="fc" id="L270">        int wipeTopicCnt = 0;</span>
+<span class="fc" id="L271">        Iterator&lt;Entry&lt;String, List&lt;QueueData&gt;&gt;&gt; itTopic = this.topicQueueTable.entrySet().iterator();</span>
+<span class="pc bpc" id="L272" title="1 of 2 branches missed.">        while (itTopic.hasNext()) {</span>
+<span class="nc" id="L273">            Entry&lt;String, List&lt;QueueData&gt;&gt; entry = itTopic.next();</span>
+<span class="nc" id="L274">            List&lt;QueueData&gt; qdList = entry.getValue();</span>
+
+<span class="nc" id="L276">            Iterator&lt;QueueData&gt; it = qdList.iterator();</span>
+<span class="nc bnc" id="L277" title="All 2 branches missed.">            while (it.hasNext()) {</span>
+<span class="nc" id="L278">                QueueData qd = it.next();</span>
+<span class="nc bnc" id="L279" title="All 2 branches missed.">                if (qd.getBrokerName().equals(brokerName)) {</span>
+<span class="nc" id="L280">                    int perm = qd.getPerm();</span>
+<span class="nc" id="L281">                    perm &amp;= ~PermName.PERM_WRITE;</span>
+<span class="nc" id="L282">                    qd.setPerm(perm);</span>
+<span class="nc" id="L283">                    wipeTopicCnt++;</span>
+                }
+<span class="nc" id="L285">            }</span>
+<span class="nc" id="L286">        }</span>
+
+<span class="fc" id="L288">        return wipeTopicCnt;</span>
+    }
+
+    public void unregisterBroker(
+        final String clusterName,
+        final String brokerAddr,
+        final String brokerName,
+        final long brokerId) {
+        try {
+            try {
+<span class="fc" id="L298">                this.lock.writeLock().lockInterruptibly();</span>
+<span class="fc" id="L299">                BrokerLiveInfo brokerLiveInfo = this.brokerLiveTable.remove(brokerAddr);</span>
+<span class="pc bpc" id="L300" title="1 of 2 branches missed.">                log.info(&quot;unregisterBroker, remove from brokerLiveTable {}, {}&quot;,</span>
+                    brokerLiveInfo != null ? &quot;OK&quot; : &quot;Failed&quot;,
+                    brokerAddr
+                );
+
+<span class="fc" id="L305">                this.filterServerTable.remove(brokerAddr);</span>
+
+<span class="fc" id="L307">                boolean removeBrokerName = false;</span>
+<span class="fc" id="L308">                BrokerData brokerData = this.brokerAddrTable.get(brokerName);</span>
+<span class="pc bpc" id="L309" title="1 of 2 branches missed.">                if (null != brokerData) {</span>
+<span class="fc" id="L310">                    String addr = brokerData.getBrokerAddrs().remove(brokerId);</span>
+<span class="pc bpc" id="L311" title="1 of 2 branches missed.">                    log.info(&quot;unregisterBroker, remove addr from brokerAddrTable {}, {}&quot;,</span>
+                        addr != null ? &quot;OK&quot; : &quot;Failed&quot;,
+                        brokerAddr
+                    );
+
+<span class="pc bpc" id="L316" title="1 of 2 branches missed.">                    if (brokerData.getBrokerAddrs().isEmpty()) {</span>
+<span class="fc" id="L317">                        this.brokerAddrTable.remove(brokerName);</span>
+<span class="fc" id="L318">                        log.info(&quot;unregisterBroker, remove name from brokerAddrTable OK, {}&quot;,</span>
+                            brokerName
+                        );
+
+<span class="fc" id="L322">                        removeBrokerName = true;</span>
+                    }
+                }
+
+<span class="pc bpc" id="L326" title="1 of 2 branches missed.">                if (removeBrokerName) {</span>
+<span class="fc" id="L327">                    Set&lt;String&gt; nameSet = this.clusterAddrTable.get(clusterName);</span>
+<span class="pc bpc" id="L328" title="1 of 2 branches missed.">                    if (nameSet != null) {</span>
+<span class="fc" id="L329">                        boolean removed = nameSet.remove(brokerName);</span>
+<span class="pc bpc" id="L330" title="1 of 2 branches missed.">                        log.info(&quot;unregisterBroker, remove name from clusterAddrTable {}, {}&quot;,</span>
+                            removed ? &quot;OK&quot; : &quot;Failed&quot;,
+                            brokerName);
+
+<span class="pc bpc" id="L334" title="1 of 2 branches missed.">                        if (nameSet.isEmpty()) {</span>
+<span class="fc" id="L335">                            this.clusterAddrTable.remove(clusterName);</span>
+<span class="fc" id="L336">                            log.info(&quot;unregisterBroker, remove cluster from clusterAddrTable {}&quot;,</span>
+                                clusterName
+                            );
+                        }
+                    }
+<span class="fc" id="L341">                    this.removeTopicByBrokerName(brokerName);</span>
+                }
+            } finally {
+<span class="fc" id="L344">                this.lock.writeLock().unlock();</span>
+            }
+<span class="nc" id="L346">        } catch (Exception e) {</span>
+<span class="nc" id="L347">            log.error(&quot;unregisterBroker Exception&quot;, e);</span>
+<span class="fc" id="L348">        }</span>
+<span class="fc" id="L349">    }</span>
+
+    private void removeTopicByBrokerName(final String brokerName) {
+<span class="fc" id="L352">        Iterator&lt;Entry&lt;String, List&lt;QueueData&gt;&gt;&gt; itMap = this.topicQueueTable.entrySet().iterator();</span>
+<span class="pc bpc" id="L353" title="1 of 2 branches missed.">        while (itMap.hasNext()) {</span>
+<span class="nc" id="L354">            Entry&lt;String, List&lt;QueueData&gt;&gt; entry = itMap.next();</span>
+
+<span class="nc" id="L356">            String topic = entry.getKey();</span>
+<span class="nc" id="L357">            List&lt;QueueData&gt; queueDataList = entry.getValue();</span>
+<span class="nc" id="L358">            Iterator&lt;QueueData&gt; it = queueDataList.iterator();</span>
+<span class="nc bnc" id="L359" title="All 2 branches missed.">            while (it.hasNext()) {</span>
+<span class="nc" id="L360">                QueueData qd = it.next();</span>
+<span class="nc bnc" id="L361" title="All 2 branches missed.">                if (qd.getBrokerName().equals(brokerName)) {</span>
+<span class="nc" id="L362">                    log.info(&quot;removeTopicByBrokerName, remove one broker's topic {} {}&quot;, topic, qd);</span>
+<span class="nc" id="L363">                    it.remove();</span>
+                }
+<span class="nc" id="L365">            }</span>
+
+<span class="nc bnc" id="L367" title="All 2 branches missed.">            if (queueDataList.isEmpty()) {</span>
+<span class="nc" id="L368">                log.info(&quot;removeTopicByBrokerName, remove the topic all queue {}&quot;, topic);</span>
+<span class="nc" id="L369">                itMap.remove();</span>
+            }
+<span class="nc" id="L371">        }</span>
+<span class="fc" id="L372">    }</span>
+
+    public TopicRouteData pickupTopicRouteData(final String topic) {
+<span class="fc" id="L375">        TopicRouteData topicRouteData = new TopicRouteData();</span>
+<span class="fc" id="L376">        boolean foundQueueData = false;</span>
+<span class="fc" id="L377">        boolean foundBrokerData = false;</span>
+<span class="fc" id="L378">        Set&lt;String&gt; brokerNameSet = new HashSet&lt;String&gt;();</span>
+<span class="fc" id="L379">        List&lt;BrokerData&gt; brokerDataList = new LinkedList&lt;BrokerData&gt;();</span>
+<span class="fc" id="L380">        topicRouteData.setBrokerDatas(brokerDataList);</span>
+
+<span class="fc" id="L382">        HashMap&lt;String, List&lt;String&gt;&gt; filterServerMap = new HashMap&lt;String, List&lt;String&gt;&gt;();</span>
+<span class="fc" id="L383">        topicRouteData.setFilterServerTable(filterServerMap);</span>
+
+        try {
+            try {
+<span class="fc" id="L387">                this.lock.readLock().lockInterruptibly();</span>
+<span class="fc" id="L388">                List&lt;QueueData&gt; queueDataList = this.topicQueueTable.get(topic);</span>
+<span class="pc bpc" id="L389" title="1 of 2 branches missed.">                if (queueDataList != null) {</span>
+<span class="nc" id="L390">                    topicRouteData.setQueueDatas(queueDataList);</span>
+<span class="nc" id="L391">                    foundQueueData = true;</span>
+
+<span class="nc" id="L393">                    Iterator&lt;QueueData&gt; it = queueDataList.iterator();</span>
+<span class="nc bnc" id="L394" title="All 2 branches missed.">                    while (it.hasNext()) {</span>
+<span class="nc" id="L395">                        QueueData qd = it.next();</span>
+<span class="nc" id="L396">                        brokerNameSet.add(qd.getBrokerName());</span>
+<span class="nc" id="L397">                    }</span>
+
+<span class="nc bnc" id="L399" title="All 2 branches missed.">                    for (String brokerName : brokerNameSet) {</span>
+<span class="nc" id="L400">                        BrokerData brokerData = this.brokerAddrTable.get(brokerName);</span>
+<span class="nc bnc" id="L401" title="All 2 branches missed.">                        if (null != brokerData) {</span>
+<span class="nc" id="L402">                            BrokerData brokerDataClone = new BrokerData(brokerData.getCluster(), brokerData.getBrokerName(), (HashMap&lt;Long, String&gt;) brokerData</span>
+<span class="nc" id="L403">                                .getBrokerAddrs().clone());</span>
+<span class="nc" id="L404">                            brokerDataList.add(brokerDataClone);</span>
+<span class="nc" id="L405">                            foundBrokerData = true;</span>
+<span class="nc bnc" id="L406" title="All 2 branches missed.">                            for (final String brokerAddr : brokerDataClone.getBrokerAddrs().values()) {</span>
+<span class="nc" id="L407">                                List&lt;String&gt; filterServerList = this.filterServerTable.get(brokerAddr);</span>
+<span class="nc" id="L408">                                filterServerMap.put(brokerAddr, filterServerList);</span>
+<span class="nc" id="L409">                            }</span>
+                        }
+<span class="nc" id="L411">                    }</span>
+                }
+            } finally {
+<span class="fc" id="L414">                this.lock.readLock().unlock();</span>
+            }
+<span class="nc" id="L416">        } catch (Exception e) {</span>
+<span class="nc" id="L417">            log.error(&quot;pickupTopicRouteData Exception&quot;, e);</span>
+<span class="fc" id="L418">        }</span>
+
+<span class="fc" id="L420">        log.debug(&quot;pickupTopicRouteData {} {}&quot;, topic, topicRouteData);</span>
+
+<span class="pc bpc" id="L422" title="3 of 4 branches missed.">        if (foundBrokerData &amp;&amp; foundQueueData) {</span>
+<span class="nc" id="L423">            return topicRouteData;</span>
+        }
+
+<span class="fc" id="L426">        return null;</span>
+    }
+
+    public void scanNotActiveBroker() {
+<span class="nc" id="L430">        Iterator&lt;Entry&lt;String, BrokerLiveInfo&gt;&gt; it = this.brokerLiveTable.entrySet().iterator();</span>
+<span class="nc bnc" id="L431" title="All 2 branches missed.">        while (it.hasNext()) {</span>
+<span class="nc" id="L432">            Entry&lt;String, BrokerLiveInfo&gt; next = it.next();</span>
+<span class="nc" id="L433">            long last = next.getValue().getLastUpdateTimestamp();</span>
+<span class="nc bnc" id="L434" title="All 2 branches missed.">            if ((last + BROKER_CHANNEL_EXPIRED_TIME) &lt; System.currentTimeMillis()) {</span>
+<span class="nc" id="L435">                RemotingUtil.closeChannel(next.getValue().getChannel());</span>
+<span class="nc" id="L436">                it.remove();</span>
+<span class="nc" id="L437">                log.warn(&quot;The broker channel expired, {} {}ms&quot;, next.getKey(), BROKER_CHANNEL_EXPIRED_TIME);</span>
+<span class="nc" id="L438">                this.onChannelDestroy(next.getKey(), next.getValue().getChannel());</span>
+            }
+<span class="nc" id="L440">        }</span>
+<span class="nc" id="L441">    }</span>
+
+    public void onChannelDestroy(String remoteAddr, Channel channel) {
+<span class="fc" id="L444">        String brokerAddrFound = null;</span>
+<span class="pc bpc" id="L445" title="1 of 2 branches missed.">        if (channel != null) {</span>
+            try {
+                try {
+<span class="nc" id="L448">                    this.lock.readLock().lockInterruptibly();</span>
+<span class="nc" id="L449">                    Iterator&lt;Entry&lt;String, BrokerLiveInfo&gt;&gt; itBrokerLiveTable =</span>
+<span class="nc" id="L450">                        this.brokerLiveTable.entrySet().iterator();</span>
+<span class="nc bnc" id="L451" title="All 2 branches missed.">                    while (itBrokerLiveTable.hasNext()) {</span>
+<span class="nc" id="L452">                        Entry&lt;String, BrokerLiveInfo&gt; entry = itBrokerLiveTable.next();</span>
+<span class="nc bnc" id="L453" title="All 2 branches missed.">                        if (entry.getValue().getChannel() == channel) {</span>
+<span class="nc" id="L454">                            brokerAddrFound = entry.getKey();</span>
+<span class="nc" id="L455">                            break;</span>
+                        }
+<span class="nc" id="L457">                    }</span>
+                } finally {
+<span class="nc" id="L459">                    this.lock.readLock().unlock();</span>
+                }
+<span class="nc" id="L461">            } catch (Exception e) {</span>
+<span class="nc" id="L462">                log.error(&quot;onChannelDestroy Exception&quot;, e);</span>
+<span class="nc" id="L463">            }</span>
+        }
+
+<span class="pc bpc" id="L466" title="1 of 2 branches missed.">        if (null == brokerAddrFound) {</span>
+<span class="fc" id="L467">            brokerAddrFound = remoteAddr;</span>
+        } else {
+<span class="nc" id="L469">            log.info(&quot;the broker's channel destroyed, {}, clean it's data structure at once&quot;, brokerAddrFound);</span>
+        }
+
+<span class="pc bpc" id="L472" title="2 of 4 branches missed.">        if (brokerAddrFound != null &amp;&amp; brokerAddrFound.length() &gt; 0) {</span>
+
+            try {
+                try {
+<span class="fc" id="L476">                    this.lock.writeLock().lockInterruptibly();</span>
+<span class="fc" id="L477">                    this.brokerLiveTable.remove(brokerAddrFound);</span>
+<span class="fc" id="L478">                    this.filterServerTable.remove(brokerAddrFound);</span>
+<span class="fc" id="L479">                    String brokerNameFound = null;</span>
+<span class="fc" id="L480">                    boolean removeBrokerName = false;</span>
+<span class="fc" id="L481">                    Iterator&lt;Entry&lt;String, BrokerData&gt;&gt; itBrokerAddrTable =</span>
+<span class="fc" id="L482">                        this.brokerAddrTable.entrySet().iterator();</span>
+<span class="pc bpc" id="L483" title="3 of 4 branches missed.">                    while (itBrokerAddrTable.hasNext() &amp;&amp; (null == brokerNameFound)) {</span>
+<span class="nc" id="L484">                        BrokerData brokerData = itBrokerAddrTable.next().getValue();</span>
+
+<span class="nc" id="L486">                        Iterator&lt;Entry&lt;Long, String&gt;&gt; it = brokerData.getBrokerAddrs().entrySet().iterator();</span>
+<span class="nc bnc" id="L487" title="All 2 branches missed.">                        while (it.hasNext()) {</span>
+<span class="nc" id="L488">                            Entry&lt;Long, String&gt; entry = it.next();</span>
+<span class="nc" id="L489">                            Long brokerId = entry.getKey();</span>
+<span class="nc" id="L490">                            String brokerAddr = entry.getValue();</span>
+<span class="nc bnc" id="L491" title="All 2 branches missed.">                            if (brokerAddr.equals(brokerAddrFound)) {</span>
+<span class="nc" id="L492">                                brokerNameFound = brokerData.getBrokerName();</span>
+<span class="nc" id="L493">                                it.remove();</span>
+<span class="nc" id="L494">                                log.info(&quot;remove brokerAddr[{}, {}] from brokerAddrTable, because channel destroyed&quot;,</span>
+                                    brokerId, brokerAddr);
+<span class="nc" id="L496">                                break;</span>
+                            }
+<span class="nc" id="L498">                        }</span>
+
+<span class="nc bnc" id="L500" title="All 2 branches missed.">                        if (brokerData.getBrokerAddrs().isEmpty()) {</span>
+<span class="nc" id="L501">                            removeBrokerName = true;</span>
+<span class="nc" id="L502">                            itBrokerAddrTable.remove();</span>
+<span class="nc" id="L503">                            log.info(&quot;remove brokerName[{}] from brokerAddrTable, because channel destroyed&quot;,</span>
+<span class="nc" id="L504">                                brokerData.getBrokerName());</span>
+                        }
+<span class="nc" id="L506">                    }</span>
+
+<span class="pc bpc" id="L508" title="3 of 4 branches missed.">                    if (brokerNameFound != null &amp;&amp; removeBrokerName) {</span>
+<span class="nc" id="L509">                        Iterator&lt;Entry&lt;String, Set&lt;String&gt;&gt;&gt; it = this.clusterAddrTable.entrySet().iterator();</span>
+<span class="nc bnc" id="L510" title="All 2 branches missed.">                        while (it.hasNext()) {</span>
+<span class="nc" id="L511">                            Entry&lt;String, Set&lt;String&gt;&gt; entry = it.next();</span>
+<span class="nc" id="L512">                            String clusterName = entry.getKey();</span>
+<span class="nc" id="L513">                            Set&lt;String&gt; brokerNames = entry.getValue();</span>
+<span class="nc" id="L514">                            boolean removed = brokerNames.remove(brokerNameFound);</span>
+<span class="nc bnc" id="L515" title="All 2 branches missed.">                            if (removed) {</span>
+<span class="nc" id="L516">                                log.info(&quot;remove brokerName[{}], clusterName[{}] from clusterAddrTable, because channel destroyed&quot;,</span>
+                                    brokerNameFound, clusterName);
+
+<span class="nc bnc" id="L519" title="All 2 branches missed.">                                if (brokerNames.isEmpty()) {</span>
+<span class="nc" id="L520">                                    log.info(&quot;remove the clusterName[{}] from clusterAddrTable, because channel destroyed and no broker in this cluster&quot;,</span>
+                                        clusterName);
+<span class="nc" id="L522">                                    it.remove();</span>
+                                }
+
+                                break;
+                            }
+<span class="nc" id="L527">                        }</span>
+                    }
+
+<span class="pc bpc" id="L530" title="1 of 2 branches missed.">                    if (removeBrokerName) {</span>
+<span class="nc" id="L531">                        Iterator&lt;Entry&lt;String, List&lt;QueueData&gt;&gt;&gt; itTopicQueueTable =</span>
+<span class="nc" id="L532">                            this.topicQueueTable.entrySet().iterator();</span>
+<span class="nc bnc" id="L533" title="All 2 branches missed.">                        while (itTopicQueueTable.hasNext()) {</span>
+<span class="nc" id="L534">                            Entry&lt;String, List&lt;QueueData&gt;&gt; entry = itTopicQueueTable.next();</span>
+<span class="nc" id="L535">                            String topic = entry.getKey();</span>
+<span class="nc" id="L536">                            List&lt;QueueData&gt; queueDataList = entry.getValue();</span>
+
+<span class="nc" id="L538">                            Iterator&lt;QueueData&gt; itQueueData = queueDataList.iterator();</span>
+<span class="nc bnc" id="L539" title="All 2 branches missed.">                            while (itQueueData.hasNext()) {</span>
+<span class="nc" id="L540">                                QueueData queueData = itQueueData.next();</span>
+<span class="nc bnc" id="L541" title="All 2 branches missed.">                                if (queueData.getBrokerName().equals(brokerNameFound)) {</span>
+<span class="nc" id="L542">                                    itQueueData.remove();</span>
+<span class="nc" id="L543">                                    log.info(&quot;remove topic[{} {}], from topicQueueTable, because channel destroyed&quot;,</span>
+                                        topic, queueData);
+                                }
+<span class="nc" id="L546">                            }</span>
+
+<span class="nc bnc" id="L548" title="All 2 branches missed.">                            if (queueDataList.isEmpty()) {</span>
+<span class="nc" id="L549">                                itTopicQueueTable.remove();</span>
+<span class="nc" id="L550">                                log.info(&quot;remove topic[{}] all queue, from topicQueueTable, because channel destroyed&quot;,</span>
+                                    topic);
+                            }
+<span class="nc" id="L553">                        }</span>
+                    }
+                } finally {
+<span class="fc" id="L556">                    this.lock.writeLock().unlock();</span>
+                }
+<span class="nc" id="L558">            } catch (Exception e) {</span>
+<span class="nc" id="L559">                log.error(&quot;onChannelDestroy Exception&quot;, e);</span>
+<span class="fc" id="L560">            }</span>
+        }
+<span class="fc" id="L562">    }</span>
+
+    public void printAllPeriodically() {
+        try {
+            try {
+<span class="fc" id="L567">                this.lock.readLock().lockInterruptibly();</span>
+<span class="fc" id="L568">                log.info(&quot;--------------------------------------------------------&quot;);</span>
+                {
+<span class="fc" id="L570">                    log.info(&quot;topicQueueTable SIZE: {}&quot;, this.topicQueueTable.size());</span>
+<span class="fc" id="L571">                    Iterator&lt;Entry&lt;String, List&lt;QueueData&gt;&gt;&gt; it = this.topicQueueTable.entrySet().iterator();</span>
+<span class="pc bpc" id="L572" title="1 of 2 branches missed.">                    while (it.hasNext()) {</span>
+<span class="nc" id="L573">                        Entry&lt;String, List&lt;QueueData&gt;&gt; next = it.next();</span>
+<span class="nc" id="L574">                        log.info(&quot;topicQueueTable Topic: {} {}&quot;, next.getKey(), next.getValue());</span>
+<span class="nc" id="L575">                    }</span>
+                }
+
+                {
+<span class="fc" id="L579">                    log.info(&quot;brokerAddrTable SIZE: {}&quot;, this.brokerAddrTable.size());</span>
+<span class="fc" id="L580">                    Iterator&lt;Entry&lt;String, BrokerData&gt;&gt; it = this.brokerAddrTable.entrySet().iterator();</span>
+<span class="fc bfc" id="L581" title="All 2 branches covered.">                    while (it.hasNext()) {</span>
+<span class="fc" id="L582">                        Entry&lt;String, BrokerData&gt; next = it.next();</span>
+<span class="fc" id="L583">                        log.info(&quot;brokerAddrTable brokerName: {} {}&quot;, next.getKey(), next.getValue());</span>
+<span class="fc" id="L584">                    }</span>
+                }
+
+                {
+<span class="fc" id="L588">                    log.info(&quot;brokerLiveTable SIZE: {}&quot;, this.brokerLiveTable.size());</span>
+<span class="fc" id="L589">                    Iterator&lt;Entry&lt;String, BrokerLiveInfo&gt;&gt; it = this.brokerLiveTable.entrySet().iterator();</span>
+<span class="fc bfc" id="L590" title="All 2 branches covered.">                    while (it.hasNext()) {</span>
+<span class="fc" id="L591">                        Entry&lt;String, BrokerLiveInfo&gt; next = it.next();</span>
+<span class="fc" id="L592">                        log.info(&quot;brokerLiveTable brokerAddr: {} {}&quot;, next.getKey(), next.getValue());</span>
+<span class="fc" id="L593">                    }</span>
+                }
+
+                {
+<span class="fc" id="L597">                    log.info(&quot;clusterAddrTable SIZE: {}&quot;, this.clusterAddrTable.size());</span>
+<span class="fc" id="L598">                    Iterator&lt;Entry&lt;String, Set&lt;String&gt;&gt;&gt; it = this.clusterAddrTable.entrySet().iterator();</span>
+<span class="fc bfc" id="L599" title="All 2 branches covered.">                    while (it.hasNext()) {</span>
+<span class="fc" id="L600">                        Entry&lt;String, Set&lt;String&gt;&gt; next = it.next();</span>
+<span class="fc" id="L601">                        log.info(&quot;clusterAddrTable clusterName: {} {}&quot;, next.getKey(), next.getValue());</span>
+<span class="fc" id="L602">                    }</span>
+                }
+            } finally {
+<span class="fc" id="L605">                this.lock.readLock().unlock();</span>
+            }
+<span class="nc" id="L607">        } catch (Exception e) {</span>
+<span class="nc" id="L608">            log.error(&quot;printAllPeriodically Exception&quot;, e);</span>
+<span class="fc" id="L609">        }</span>
+<span class="fc" id="L610">    }</span>
+
+    public byte[] getSystemTopicList() {
+<span class="fc" id="L613">        TopicList topicList = new TopicList();</span>
+        try {
+            try {
+<span class="fc" id="L616">                this.lock.readLock().lockInterruptibly();</span>
+<span class="fc bfc" id="L617" title="All 2 branches covered.">                for (Map.Entry&lt;String, Set&lt;String&gt;&gt; entry : clusterAddrTable.entrySet()) {</span>
+<span class="fc" id="L618">                    topicList.getTopicList().add(entry.getKey());</span>
+<span class="fc" id="L619">                    topicList.getTopicList().addAll(entry.getValue());</span>
+<span class="fc" id="L620">                }</span>
+
+<span class="pc bpc" id="L622" title="2 of 4 branches missed.">                if (brokerAddrTable != null &amp;&amp; !brokerAddrTable.isEmpty()) {</span>
+<span class="fc" id="L623">                    Iterator&lt;String&gt; it = brokerAddrTable.keySet().iterator();</span>
+<span class="pc bpc" id="L624" title="1 of 2 branches missed.">                    while (it.hasNext()) {</span>
+<span class="fc" id="L625">                        BrokerData bd = brokerAddrTable.get(it.next());</span>
+<span class="fc" id="L626">                        HashMap&lt;Long, String&gt; brokerAddrs = bd.getBrokerAddrs();</span>
+<span class="pc bpc" id="L627" title="2 of 4 branches missed.">                        if (brokerAddrs != null &amp;&amp; !brokerAddrs.isEmpty()) {</span>
+<span class="fc" id="L628">                            Iterator&lt;Long&gt; it2 = brokerAddrs.keySet().iterator();</span>
+<span class="fc" id="L629">                            topicList.setBrokerAddr(brokerAddrs.get(it2.next()));</span>
+<span class="fc" id="L630">                            break;</span>
+                        }
+<span class="nc" id="L632">                    }</span>
+                }
+            } finally {
+<span class="fc" id="L635">                this.lock.readLock().unlock();</span>
+            }
+<span class="nc" id="L637">        } catch (Exception e) {</span>
+<span class="nc" id="L638">            log.error(&quot;getAllTopicList Exception&quot;, e);</span>
+<span class="fc" id="L639">        }</span>
+
+<span class="fc" id="L641">        return topicList.encode();</span>
+    }
+
+    public byte[] getTopicsByCluster(String cluster) {
+<span class="fc" id="L645">        TopicList topicList = new TopicList();</span>
+        try {
+            try {
+<span class="fc" id="L648">                this.lock.readLock().lockInterruptibly();</span>
+<span class="fc" id="L649">                Set&lt;String&gt; brokerNameSet = this.clusterAddrTable.get(cluster);</span>
+<span class="fc bfc" id="L650" title="All 2 branches covered.">                for (String brokerName : brokerNameSet) {</span>
+<span class="fc" id="L651">                    Iterator&lt;Entry&lt;String, List&lt;QueueData&gt;&gt;&gt; topicTableIt =</span>
+<span class="fc" id="L652">                        this.topicQueueTable.entrySet().iterator();</span>
+<span class="pc bpc" id="L653" title="1 of 2 branches missed.">                    while (topicTableIt.hasNext()) {</span>
+<span class="nc" id="L654">                        Entry&lt;String, List&lt;QueueData&gt;&gt; topicEntry = topicTableIt.next();</span>
+<span class="nc" id="L655">                        String topic = topicEntry.getKey();</span>
+<span class="nc" id="L656">                        List&lt;QueueData&gt; queueDatas = topicEntry.getValue();</span>
+<span class="nc bnc" id="L657" title="All 2 branches missed.">                        for (QueueData queueData : queueDatas) {</span>
+<span class="nc bnc" id="L658" title="All 2 branches missed.">                            if (brokerName.equals(queueData.getBrokerName())) {</span>
+<span class="nc" id="L659">                                topicList.getTopicList().add(topic);</span>
+<span class="nc" id="L660">                                break;</span>
+                            }
+<span class="nc" id="L662">                        }</span>
+<span class="nc" id="L663">                    }</span>
+<span class="fc" id="L664">                }</span>
+            } finally {
+<span class="fc" id="L666">                this.lock.readLock().unlock();</span>
+            }
+<span class="nc" id="L668">        } catch (Exception e) {</span>
+<span class="nc" id="L669">            log.error(&quot;getAllTopicList Exception&quot;, e);</span>
+<span class="fc" id="L670">        }</span>
+
+<span class="fc" id="L672">        return topicList.encode();</span>
+    }
+
+    public byte[] getUnitTopics() {
+<span class="fc" id="L676">        TopicList topicList = new TopicList();</span>
+        try {
+            try {
+<span class="fc" id="L679">                this.lock.readLock().lockInterruptibly();</span>
+<span class="fc" id="L680">                Iterator&lt;Entry&lt;String, List&lt;QueueData&gt;&gt;&gt; topicTableIt =</span>
+<span class="fc" id="L681">                    this.topicQueueTable.entrySet().iterator();</span>
+<span class="pc bpc" id="L682" title="1 of 2 branches missed.">                while (topicTableIt.hasNext()) {</span>
+<span class="nc" id="L683">                    Entry&lt;String, List&lt;QueueData&gt;&gt; topicEntry = topicTableIt.next();</span>
+<span class="nc" id="L684">                    String topic = topicEntry.getKey();</span>
+<span class="nc" id="L685">                    List&lt;QueueData&gt; queueDatas = topicEntry.getValue();</span>
+<span class="nc bnc" id="L686" title="All 4 branches missed.">                    if (queueDatas != null &amp;&amp; queueDatas.size() &gt; 0</span>
+<span class="nc bnc" id="L687" title="All 2 branches missed.">                        &amp;&amp; TopicSysFlag.hasUnitFlag(queueDatas.get(0).getTopicSynFlag())) {</span>
+<span class="nc" id="L688">                        topicList.getTopicList().add(topic);</span>
+                    }
+<span class="nc" id="L690">                }</span>
+            } finally {
+<span class="fc" id="L692">                this.lock.readLock().unlock();</span>
+            }
+<span class="nc" id="L694">        } catch (Exception e) {</span>
+<span class="nc" id="L695">            log.error(&quot;getAllTopicList Exception&quot;, e);</span>
+<span class="fc" id="L696">        }</span>
+
+<span class="fc" id="L698">        return topicList.encode();</span>
+    }
+
+    public byte[] getHasUnitSubTopicList() {
+<span class="fc" id="L702">        TopicList topicList = new TopicList();</span>
+        try {
+            try {
+<span class="fc" id="L705">                this.lock.readLock().lockInterruptibly();</span>
+<span class="fc" id="L706">                Iterator&lt;Entry&lt;String, List&lt;QueueData&gt;&gt;&gt; topicTableIt =</span>
+<span class="fc" id="L707">                    this.topicQueueTable.entrySet().iterator();</span>
+<span class="pc bpc" id="L708" title="1 of 2 branches missed.">                while (topicTableIt.hasNext()) {</span>
+<span class="nc" id="L709">                    Entry&lt;String, List&lt;QueueData&gt;&gt; topicEntry = topicTableIt.next();</span>
+<span class="nc" id="L710">                    String topic = topicEntry.getKey();</span>
+<span class="nc" id="L711">                    List&lt;QueueData&gt; queueDatas = topicEntry.getValue();</span>
+<span class="nc bnc" id="L712" title="All 4 branches missed.">                    if (queueDatas != null &amp;&amp; queueDatas.size() &gt; 0</span>
+<span class="nc bnc" id="L713" title="All 2 branches missed.">                        &amp;&amp; TopicSysFlag.hasUnitSubFlag(queueDatas.get(0).getTopicSynFlag())) {</span>
+<span class="nc" id="L714">                        topicList.getTopicList().add(topic);</span>
+                    }
+<span class="nc" id="L716">                }</span>
+            } finally {
+<span class="fc" id="L718">                this.lock.readLock().unlock();</span>
+            }
+<span class="nc" id="L720">        } catch (Exception e) {</span>
+<span class="nc" id="L721">            log.error(&quot;getAllTopicList Exception&quot;, e);</span>
+<span class="fc" id="L722">        }</span>
+
+<span class="fc" id="L724">        return topicList.encode();</span>
+    }
+
+    public byte[] getHasUnitSubUnUnitTopicList() {
+<span class="fc" id="L728">        TopicList topicList = new TopicList();</span>
+        try {
+            try {
+<span class="fc" id="L731">                this.lock.readLock().lockInterruptibly();</span>
+<span class="fc" id="L732">                Iterator&lt;Entry&lt;String, List&lt;QueueData&gt;&gt;&gt; topicTableIt =</span>
+<span class="fc" id="L733">                    this.topicQueueTable.entrySet().iterator();</span>
+<span class="pc bpc" id="L734" title="1 of 2 branches missed.">                while (topicTableIt.hasNext()) {</span>
+<span class="nc" id="L735">                    Entry&lt;String, List&lt;QueueData&gt;&gt; topicEntry = topicTableIt.next();</span>
+<span class="nc" id="L736">                    String topic = topicEntry.getKey();</span>
+<span class="nc" id="L737">                    List&lt;QueueData&gt; queueDatas = topicEntry.getValue();</span>
+<span class="nc bnc" id="L738" title="All 4 branches missed.">                    if (queueDatas != null &amp;&amp; queueDatas.size() &gt; 0</span>
+<span class="nc bnc" id="L739" title="All 2 branches missed.">                        &amp;&amp; !TopicSysFlag.hasUnitFlag(queueDatas.get(0).getTopicSynFlag())</span>
+<span class="nc bnc" id="L740" title="All 2 branches missed.">                        &amp;&amp; TopicSysFlag.hasUnitSubFlag(queueDatas.get(0).getTopicSynFlag())) {</span>
+<span class="nc" id="L741">                        topicList.getTopicList().add(topic);</span>
+                    }
+<span class="nc" id="L743">                }</span>
+            } finally {
+<span class="fc" id="L745">                this.lock.readLock().unlock();</span>
+            }
+<span class="nc" id="L747">        } catch (Exception e) {</span>
+<span class="nc" id="L748">            log.error(&quot;getAllTopicList Exception&quot;, e);</span>
+<span class="fc" id="L749">        }</span>
+
+<span class="fc" id="L751">        return topicList.encode();</span>
+    }
+}
+
+class BrokerLiveInfo {
+    private long lastUpdateTimestamp;
+    private DataVersion dataVersion;
+    private Channel channel;
+    private String haServerAddr;
+
+    public BrokerLiveInfo(long lastUpdateTimestamp, DataVersion dataVersion, Channel channel,
+<span class="fc" id="L762">        String haServerAddr) {</span>
+<span class="fc" id="L763">        this.lastUpdateTimestamp = lastUpdateTimestamp;</span>
+<span class="fc" id="L764">        this.dataVersion = dataVersion;</span>
+<span class="fc" id="L765">        this.channel = channel;</span>
+<span class="fc" id="L766">        this.haServerAddr = haServerAddr;</span>
+<span class="fc" id="L767">    }</span>
+
+    public long getLastUpdateTimestamp() {
+<span class="nc" id="L770">        return lastUpdateTimestamp;</span>
+    }
+
+    public void setLastUpdateTimestamp(long lastUpdateTimestamp) {
+<span class="nc" id="L774">        this.lastUpdateTimestamp = lastUpdateTimestamp;</span>
+<span class="nc" id="L775">    }</span>
+
+    public DataVersion getDataVersion() {
+<span class="nc" id="L778">        return dataVersion;</span>
+    }
+
+    public void setDataVersion(DataVersion dataVersion) {
+<span class="nc" id="L782">        this.dataVersion = dataVersion;</span>
+<span class="nc" id="L783">    }</span>
+
+    public Channel getChannel() {
+<span class="nc" id="L786">        return channel;</span>
+    }
+
+    public void setChannel(Channel channel) {
+<span class="nc" id="L790">        this.channel = channel;</span>
+<span class="nc" id="L791">    }</span>
+
+    public String getHaServerAddr() {
+<span class="nc" id="L794">        return haServerAddr;</span>
+    }
+
+    public void setHaServerAddr(String haServerAddr) {
+<span class="nc" id="L798">        this.haServerAddr = haServerAddr;</span>
+<span class="nc" id="L799">    }</span>
+
+    @Override
+    public String toString() {
+<span class="fc" id="L803">        return &quot;BrokerLiveInfo [lastUpdateTimestamp=&quot; + lastUpdateTimestamp + &quot;, dataVersion=&quot; + dataVersion</span>
+            + &quot;, channel=&quot; + channel + &quot;, haServerAddr=&quot; + haServerAddr + &quot;]&quot;;
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.5.201910111838</span></div></body></html>

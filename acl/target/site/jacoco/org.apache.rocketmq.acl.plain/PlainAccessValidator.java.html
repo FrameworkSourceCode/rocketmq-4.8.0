@@ -1,0 +1,165 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>PlainAccessValidator.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">rocketmq-acl 4.8.0</a> &gt; <a href="index.source.html" class="el_package">org.apache.rocketmq.acl.plain</a> &gt; <span class="el_source">PlainAccessValidator.java</span></div><h1>PlainAccessValidator.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.rocketmq.acl.plain;
+
+import java.util.List;
+import java.util.Map;
+import java.util.SortedMap;
+import java.util.TreeMap;
+import org.apache.rocketmq.acl.AccessResource;
+import org.apache.rocketmq.acl.AccessValidator;
+import org.apache.rocketmq.acl.common.AclException;
+import org.apache.rocketmq.acl.common.AclUtils;
+import org.apache.rocketmq.acl.common.Permission;
+import org.apache.rocketmq.acl.common.SessionCredentials;
+import org.apache.rocketmq.common.AclConfig;
+import org.apache.rocketmq.common.MixAll;
+import org.apache.rocketmq.common.PlainAccessConfig;
+import org.apache.rocketmq.common.protocol.RequestCode;
+import org.apache.rocketmq.common.protocol.header.GetConsumerListByGroupRequestHeader;
+import org.apache.rocketmq.common.protocol.header.UnregisterClientRequestHeader;
+import org.apache.rocketmq.common.protocol.header.UpdateConsumerOffsetRequestHeader;
+import org.apache.rocketmq.common.protocol.heartbeat.ConsumerData;
+import org.apache.rocketmq.common.protocol.heartbeat.HeartbeatData;
+import org.apache.rocketmq.common.protocol.heartbeat.SubscriptionData;
+import org.apache.rocketmq.remoting.protocol.RemotingCommand;
+
+import static org.apache.rocketmq.acl.plain.PlainAccessResource.getRetryTopic;
+
+public class PlainAccessValidator implements AccessValidator {
+
+    private PlainPermissionManager aclPlugEngine;
+
+<span class="fc" id="L47">    public PlainAccessValidator() {</span>
+<span class="fc" id="L48">        aclPlugEngine = new PlainPermissionManager();</span>
+<span class="fc" id="L49">    }</span>
+
+    @Override
+    public AccessResource parse(RemotingCommand request, String remoteAddr) {
+<span class="fc" id="L53">        PlainAccessResource accessResource = new PlainAccessResource();</span>
+<span class="pc bpc" id="L54" title="1 of 4 branches missed.">        if (remoteAddr != null &amp;&amp; remoteAddr.contains(&quot;:&quot;)) {</span>
+<span class="fc" id="L55">            accessResource.setWhiteRemoteAddress(remoteAddr.substring(0, remoteAddr.lastIndexOf(':')));</span>
+        } else {
+<span class="fc" id="L57">            accessResource.setWhiteRemoteAddress(remoteAddr);</span>
+        }
+
+<span class="fc" id="L60">        accessResource.setRequestCode(request.getCode());</span>
+
+<span class="fc bfc" id="L62" title="All 2 branches covered.">        if (request.getExtFields() == null) {</span>
+            // If request's extFields is null,then return accessResource directly(users can use whiteAddress pattern)
+            // The following logic codes depend on the request's extFields not to be null.
+<span class="fc" id="L65">            return accessResource;</span>
+        }
+<span class="fc" id="L67">        accessResource.setAccessKey(request.getExtFields().get(SessionCredentials.ACCESS_KEY));</span>
+<span class="fc" id="L68">        accessResource.setSignature(request.getExtFields().get(SessionCredentials.SIGNATURE));</span>
+<span class="fc" id="L69">        accessResource.setSecretToken(request.getExtFields().get(SessionCredentials.SECURITY_TOKEN));</span>
+
+        try {
+<span class="pc bpc" id="L72" title="1 of 10 branches missed.">            switch (request.getCode()) {</span>
+                case RequestCode.SEND_MESSAGE:
+<span class="fc" id="L74">                    accessResource.addResourceAndPerm(request.getExtFields().get(&quot;topic&quot;), Permission.PUB);</span>
+<span class="fc" id="L75">                    break;</span>
+                case RequestCode.SEND_MESSAGE_V2:
+<span class="fc" id="L77">                    accessResource.addResourceAndPerm(request.getExtFields().get(&quot;b&quot;), Permission.PUB);</span>
+<span class="fc" id="L78">                    break;</span>
+                case RequestCode.CONSUMER_SEND_MSG_BACK:
+<span class="fc" id="L80">                    accessResource.addResourceAndPerm(request.getExtFields().get(&quot;originTopic&quot;), Permission.PUB);</span>
+<span class="fc" id="L81">                    accessResource.addResourceAndPerm(getRetryTopic(request.getExtFields().get(&quot;group&quot;)), Permission.SUB);</span>
+<span class="fc" id="L82">                    break;</span>
+                case RequestCode.PULL_MESSAGE:
+<span class="fc" id="L84">                    accessResource.addResourceAndPerm(request.getExtFields().get(&quot;topic&quot;), Permission.SUB);</span>
+<span class="fc" id="L85">                    accessResource.addResourceAndPerm(getRetryTopic(request.getExtFields().get(&quot;consumerGroup&quot;)), Permission.SUB);</span>
+<span class="fc" id="L86">                    break;</span>
+                case RequestCode.QUERY_MESSAGE:
+<span class="fc" id="L88">                    accessResource.addResourceAndPerm(request.getExtFields().get(&quot;topic&quot;), Permission.SUB);</span>
+<span class="fc" id="L89">                    break;</span>
+                case RequestCode.HEART_BEAT:
+<span class="fc" id="L91">                    HeartbeatData heartbeatData = HeartbeatData.decode(request.getBody(), HeartbeatData.class);</span>
+<span class="fc bfc" id="L92" title="All 2 branches covered.">                    for (ConsumerData data : heartbeatData.getConsumerDataSet()) {</span>
+<span class="fc" id="L93">                        accessResource.addResourceAndPerm(getRetryTopic(data.getGroupName()), Permission.SUB);</span>
+<span class="fc bfc" id="L94" title="All 2 branches covered.">                        for (SubscriptionData subscriptionData : data.getSubscriptionDataSet()) {</span>
+<span class="fc" id="L95">                            accessResource.addResourceAndPerm(subscriptionData.getTopic(), Permission.SUB);</span>
+<span class="fc" id="L96">                        }</span>
+<span class="fc" id="L97">                    }</span>
+<span class="fc" id="L98">                    break;</span>
+                case RequestCode.UNREGISTER_CLIENT:
+<span class="fc" id="L100">                    final UnregisterClientRequestHeader unregisterClientRequestHeader =</span>
+                        (UnregisterClientRequestHeader) request
+<span class="fc" id="L102">                            .decodeCommandCustomHeader(UnregisterClientRequestHeader.class);</span>
+<span class="fc" id="L103">                    accessResource.addResourceAndPerm(getRetryTopic(unregisterClientRequestHeader.getConsumerGroup()), Permission.SUB);</span>
+<span class="fc" id="L104">                    break;</span>
+                case RequestCode.GET_CONSUMER_LIST_BY_GROUP:
+<span class="fc" id="L106">                    final GetConsumerListByGroupRequestHeader getConsumerListByGroupRequestHeader =</span>
+                        (GetConsumerListByGroupRequestHeader) request
+<span class="fc" id="L108">                            .decodeCommandCustomHeader(GetConsumerListByGroupRequestHeader.class);</span>
+<span class="fc" id="L109">                    accessResource.addResourceAndPerm(getRetryTopic(getConsumerListByGroupRequestHeader.getConsumerGroup()), Permission.SUB);</span>
+<span class="fc" id="L110">                    break;</span>
+                case RequestCode.UPDATE_CONSUMER_OFFSET:
+<span class="fc" id="L112">                    final UpdateConsumerOffsetRequestHeader updateConsumerOffsetRequestHeader =</span>
+                        (UpdateConsumerOffsetRequestHeader) request
+<span class="fc" id="L114">                            .decodeCommandCustomHeader(UpdateConsumerOffsetRequestHeader.class);</span>
+<span class="fc" id="L115">                    accessResource.addResourceAndPerm(getRetryTopic(updateConsumerOffsetRequestHeader.getConsumerGroup()), Permission.SUB);</span>
+<span class="fc" id="L116">                    accessResource.addResourceAndPerm(updateConsumerOffsetRequestHeader.getTopic(), Permission.SUB);</span>
+<span class="fc" id="L117">                    break;</span>
+                default:
+                    break;
+
+            }
+<span class="nc" id="L122">        } catch (Throwable t) {</span>
+<span class="nc" id="L123">            throw new AclException(t.getMessage(), t);</span>
+<span class="fc" id="L124">        }</span>
+
+        // Content
+<span class="fc" id="L127">        SortedMap&lt;String, String&gt; map = new TreeMap&lt;String, String&gt;();</span>
+<span class="fc bfc" id="L128" title="All 2 branches covered.">        for (Map.Entry&lt;String, String&gt; entry : request.getExtFields().entrySet()) {</span>
+<span class="fc bfc" id="L129" title="All 2 branches covered.">            if (!SessionCredentials.SIGNATURE.equals(entry.getKey())</span>
+<span class="fc bfc" id="L130" title="All 2 branches covered.">                    &amp;&amp; !MixAll.UNIQUE_MSG_QUERY_FLAG.equals(entry.getKey())) {</span>
+<span class="fc" id="L131">                map.put(entry.getKey(), entry.getValue());</span>
+            }
+<span class="fc" id="L133">        }</span>
+<span class="fc" id="L134">        accessResource.setContent(AclUtils.combineRequestContent(request, map));</span>
+<span class="fc" id="L135">        return accessResource;</span>
+    }
+
+    @Override
+    public void validate(AccessResource accessResource) {
+<span class="fc" id="L140">        aclPlugEngine.validate((PlainAccessResource) accessResource);</span>
+<span class="fc" id="L141">    }</span>
+
+    @Override
+    public boolean updateAccessConfig(PlainAccessConfig plainAccessConfig) {
+<span class="fc" id="L145">        return aclPlugEngine.updateAccessConfig(plainAccessConfig);</span>
+    }
+
+    @Override
+    public boolean deleteAccessConfig(String accesskey) {
+<span class="fc" id="L150">        return aclPlugEngine.deleteAccessConfig(accesskey);</span>
+    }
+
+    @Override public String getAclConfigVersion() {
+<span class="nc" id="L154">        return aclPlugEngine.getAclConfigDataVersion();</span>
+    }
+
+    @Override public boolean updateGlobalWhiteAddrsConfig(List&lt;String&gt; globalWhiteAddrsList) {
+<span class="fc" id="L158">        return aclPlugEngine.updateGlobalWhiteAddrsConfig(globalWhiteAddrsList);</span>
+    }
+
+    @Override public AclConfig getAllAclConfig() {
+<span class="fc" id="L162">        return aclPlugEngine.getAllAclConfig();</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.5.201910111838</span></div></body></html>

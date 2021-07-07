@@ -1,0 +1,180 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>RocketmqLogbackAppender.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">rocketmq-logappender 4.8.0</a> &gt; <a href="index.source.html" class="el_package">org.apache.rocketmq.logappender.logback</a> &gt; <span class="el_source">RocketmqLogbackAppender.java</span></div><h1>RocketmqLogbackAppender.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.rocketmq.logappender.logback;
+
+import ch.qos.logback.classic.net.LoggingEventPreSerializationTransformer;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.AppenderBase;
+import ch.qos.logback.core.Layout;
+import ch.qos.logback.core.spi.PreSerializationTransformer;
+import ch.qos.logback.core.status.ErrorStatus;
+import org.apache.rocketmq.common.message.Message;
+import org.apache.rocketmq.logappender.common.ProducerInstance;
+import org.apache.rocketmq.client.producer.MQProducer;
+
+/**
+ * Logback Appender Component
+ */
+<span class="fc" id="L32">public class RocketmqLogbackAppender extends AppenderBase&lt;ILoggingEvent&gt; {</span>
+
+    /**
+     * Message tag define
+     */
+    private String tag;
+
+    /**
+     * Whitch topic to send log messages
+     */
+    private String topic;
+
+    /**
+     * RocketMQ nameserver address
+     */
+    private String nameServerAddress;
+
+    /**
+     * Log producer group
+     */
+    private String producerGroup;
+
+    /**
+     * Log producer send instance
+     */
+    private MQProducer producer;
+
+    private Layout layout;
+
+<span class="fc" id="L61">    private PreSerializationTransformer&lt;ILoggingEvent&gt; pst = new LoggingEventPreSerializationTransformer();</span>
+
+    /**
+     * Info,error,warn,callback method implementation
+     */
+    @Override
+    protected void append(ILoggingEvent event) {
+<span class="pc bpc" id="L68" title="1 of 2 branches missed.">        if (!isStarted()) {</span>
+<span class="nc" id="L69">            return;</span>
+        }
+<span class="fc" id="L71">        String logStr = this.layout.doLayout(event);</span>
+        try {
+<span class="fc" id="L73">            Message msg = new Message(topic, tag, logStr.getBytes());</span>
+<span class="fc" id="L74">            msg.getProperties().put(ProducerInstance.APPENDER_TYPE, ProducerInstance.LOGBACK_APPENDER);</span>
+
+            //Send message and do not wait for the ack from the message broker.
+<span class="fc" id="L77">            producer.sendOneway(msg);</span>
+<span class="nc" id="L78">        } catch (Exception e) {</span>
+<span class="nc" id="L79">            addError(&quot;Could not send message in RocketmqLogbackAppender [&quot; + name + &quot;]. Message is : &quot; + logStr, e);</span>
+<span class="fc" id="L80">        }</span>
+<span class="fc" id="L81">    }</span>
+
+    /**
+     * Options are activated and become effective only after calling this method.
+     */
+    public void start() {
+<span class="fc" id="L87">        int errors = 0;</span>
+
+<span class="pc bpc" id="L89" title="1 of 2 branches missed.">        if (this.layout == null) {</span>
+<span class="nc" id="L90">            addStatus(new ErrorStatus(&quot;No layout set for the RocketmqLogbackAppender named \&quot;&quot; + name + &quot;\&quot;.&quot;, this));</span>
+<span class="nc" id="L91">            errors++;</span>
+        }
+
+<span class="pc bpc" id="L94" title="2 of 4 branches missed.">        if (errors &gt; 0 || !checkEntryConditions()) {</span>
+<span class="nc" id="L95">            return;</span>
+        }
+        try {
+<span class="fc" id="L98">            producer = ProducerInstance.getProducerInstance().getInstance(nameServerAddress, producerGroup);</span>
+<span class="nc" id="L99">        } catch (Exception e) {</span>
+<span class="nc" id="L100">            addError(&quot;Starting RocketmqLogbackAppender [&quot; + this.getName()</span>
+<span class="nc" id="L101">                + &quot;] nameServerAddress:&quot; + nameServerAddress + &quot; group:&quot; + producerGroup + &quot; &quot; + e.getMessage());</span>
+<span class="fc" id="L102">        }</span>
+<span class="pc bpc" id="L103" title="1 of 2 branches missed.">        if (producer != null) {</span>
+<span class="fc" id="L104">            super.start();</span>
+        }
+<span class="fc" id="L106">    }</span>
+
+    /**
+     * When system exit,this method will be called to close resources
+     */
+    public synchronized void stop() {
+        // The synchronized modifier avoids concurrent append and close operations
+<span class="nc bnc" id="L113" title="All 2 branches missed.">        if (!this.started) {</span>
+<span class="nc" id="L114">            return;</span>
+        }
+
+<span class="nc" id="L117">        this.started = false;</span>
+
+        try {
+<span class="nc" id="L120">            ProducerInstance.getProducerInstance().removeAndClose(this.nameServerAddress, this.producerGroup);</span>
+<span class="nc" id="L121">        } catch (Exception e) {</span>
+<span class="nc" id="L122">            addError(&quot;Closeing RocketmqLogbackAppender [&quot; + this.getName()</span>
+<span class="nc" id="L123">                + &quot;] nameServerAddress:&quot; + nameServerAddress + &quot; group:&quot; + producerGroup + &quot; &quot; + e.getMessage());</span>
+<span class="nc" id="L124">        }</span>
+
+        // Help garbage collection
+<span class="nc" id="L127">        producer = null;</span>
+<span class="nc" id="L128">    }</span>
+
+    protected boolean checkEntryConditions() {
+<span class="fc" id="L131">        String fail = null;</span>
+
+<span class="pc bpc" id="L133" title="1 of 2 branches missed.">        if (this.topic == null) {</span>
+<span class="nc" id="L134">            fail = &quot;No topic&quot;;</span>
+        }
+
+<span class="pc bpc" id="L137" title="1 of 2 branches missed.">        if (fail != null) {</span>
+<span class="nc" id="L138">            addError(fail + &quot; for RocketmqLogbackAppender named [&quot; + name + &quot;].&quot;);</span>
+<span class="nc" id="L139">            return false;</span>
+        } else {
+<span class="fc" id="L141">            return true;</span>
+        }
+    }
+
+    public Layout getLayout() {
+<span class="nc" id="L146">        return this.layout;</span>
+    }
+
+    /**
+     * Set the pattern layout to format the log.
+     */
+    public void setLayout(Layout layout) {
+<span class="fc" id="L153">        this.layout = layout;</span>
+<span class="fc" id="L154">    }</span>
+
+    public String getTag() {
+<span class="nc" id="L157">        return tag;</span>
+    }
+
+    public void setTag(String tag) {
+<span class="fc" id="L161">        this.tag = tag;</span>
+<span class="fc" id="L162">    }</span>
+
+    public String getTopic() {
+<span class="nc" id="L165">        return topic;</span>
+    }
+
+    public void setTopic(String topic) {
+<span class="fc" id="L169">        this.topic = topic;</span>
+<span class="fc" id="L170">    }</span>
+
+    public void setNameServerAddress(String nameServerAddress) {
+<span class="fc" id="L173">        this.nameServerAddress = nameServerAddress;</span>
+<span class="fc" id="L174">    }</span>
+
+    public void setProducerGroup(String producerGroup) {
+<span class="fc" id="L177">        this.producerGroup = producerGroup;</span>
+<span class="fc" id="L178">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.5.201910111838</span></div></body></html>

@@ -1,0 +1,304 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>BloomFilter.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">rocketmq-filter 4.8.0</a> &gt; <a href="index.source.html" class="el_package">org.apache.rocketmq.filter.util</a> &gt; <span class="el_source">BloomFilter.java</span></div><h1>BloomFilter.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.rocketmq.filter.util;
+
+import com.google.common.hash.Hashing;
+
+import java.nio.charset.Charset;
+
+/**
+ * Simple implement of bloom filter.
+ */
+public class BloomFilter {
+
+<span class="fc" id="L29">    public static final Charset UTF_8 = Charset.forName(&quot;UTF-8&quot;);</span>
+
+    // as error rate, 10/100 = 0.1
+<span class="fc" id="L32">    private int f = 10;</span>
+<span class="fc" id="L33">    private int n = 128;</span>
+
+    // hash function num, by calculation.
+    private int k;
+    // bit count, by calculation.
+    private int m;
+
+    /**
+     * Create bloom filter by error rate and mapping num.
+     *
+     * @param f error rate
+     * @param n num will mapping to bit
+     */
+    public static BloomFilter createByFn(int f, int n) {
+<span class="fc" id="L47">        return new BloomFilter(f, n);</span>
+    }
+
+    /**
+     * Constructor.
+     *
+     * @param f error rate
+     * @param n num will mapping to bit
+     */
+<span class="fc" id="L56">    private BloomFilter(int f, int n) {</span>
+<span class="pc bpc" id="L57" title="2 of 4 branches missed.">        if (f &lt; 1 || f &gt;= 100) {</span>
+<span class="nc" id="L58">            throw new IllegalArgumentException(&quot;f must be greater or equal than 1 and less than 100&quot;);</span>
+        }
+<span class="pc bpc" id="L60" title="1 of 2 branches missed.">        if (n &lt; 1) {</span>
+<span class="nc" id="L61">            throw new IllegalArgumentException(&quot;n must be greater than 0&quot;);</span>
+        }
+
+<span class="fc" id="L64">        this.f = f;</span>
+<span class="fc" id="L65">        this.n = n;</span>
+
+        // set p = e^(-kn/m)
+        // f = (1 - p)^k = e^(kln(1-p))
+        // when p = 0.5, k = ln2 * (m/n), f = (1/2)^k = (0.618)^(m/n)
+<span class="fc" id="L70">        double errorRate = f / 100.0;</span>
+<span class="fc" id="L71">        this.k = (int) Math.ceil(logMN(0.5, errorRate));</span>
+
+<span class="pc bpc" id="L73" title="1 of 2 branches missed.">        if (this.k &lt; 1) {</span>
+<span class="nc" id="L74">            throw new IllegalArgumentException(&quot;Hash function num is less than 1, maybe you should change the value of error rate or bit num!&quot;);</span>
+        }
+
+        // m &gt;= n*log2(1/f)*log2(e)
+<span class="fc" id="L78">        this.m = (int) Math.ceil(this.n * logMN(2, 1 / errorRate) * logMN(2, Math.E));</span>
+        // m%8 = 0
+<span class="fc" id="L80">        this.m = (int) (Byte.SIZE * Math.ceil(this.m / (Byte.SIZE * 1.0)));</span>
+<span class="fc" id="L81">    }</span>
+
+    /**
+     * Calculate bit positions of {@code str}.
+     * &lt;p&gt;
+     * See &quot;Less Hashing, Same Performance: Building a Better Bloom Filter&quot; by Adam Kirsch and Michael
+     * Mitzenmacher.
+     * &lt;/p&gt;
+     */
+    public int[] calcBitPositions(String str) {
+<span class="fc" id="L91">        int[] bitPositions = new int[this.k];</span>
+
+<span class="fc" id="L93">        long hash64 = Hashing.murmur3_128().hashString(str, UTF_8).asLong();</span>
+
+<span class="fc" id="L95">        int hash1 = (int) hash64;</span>
+<span class="fc" id="L96">        int hash2 = (int) (hash64 &gt;&gt;&gt; 32);</span>
+
+<span class="fc bfc" id="L98" title="All 2 branches covered.">        for (int i = 1; i &lt;= this.k; i++) {</span>
+<span class="fc" id="L99">            int combinedHash = hash1 + (i * hash2);</span>
+            // Flip all the bits if it's negative (guaranteed positive number)
+<span class="fc bfc" id="L101" title="All 2 branches covered.">            if (combinedHash &lt; 0) {</span>
+<span class="fc" id="L102">                combinedHash = ~combinedHash;</span>
+            }
+<span class="fc" id="L104">            bitPositions[i - 1] = combinedHash % this.m;</span>
+        }
+
+<span class="fc" id="L107">        return bitPositions;</span>
+    }
+
+    /**
+     * Calculate bit positions of {@code str} to construct {@code BloomFilterData}
+     */
+    public BloomFilterData generate(String str) {
+<span class="nc" id="L114">        int[] bitPositions = calcBitPositions(str);</span>
+
+<span class="nc" id="L116">        return new BloomFilterData(bitPositions, this.m);</span>
+    }
+
+    /**
+     * Calculate bit positions of {@code str}, then set the related {@code bits} positions to 1.
+     */
+    public void hashTo(String str, BitsArray bits) {
+<span class="fc" id="L123">        hashTo(calcBitPositions(str), bits);</span>
+<span class="fc" id="L124">    }</span>
+
+    /**
+     * Set the related {@code bits} positions to 1.
+     */
+    public void hashTo(int[] bitPositions, BitsArray bits) {
+<span class="fc" id="L130">        check(bits);</span>
+
+<span class="fc bfc" id="L132" title="All 2 branches covered.">        for (int i : bitPositions) {</span>
+<span class="fc" id="L133">            bits.setBit(i, true);</span>
+        }
+<span class="fc" id="L135">    }</span>
+
+    /**
+     * Extra check:
+     * &lt;li&gt;1. check {@code filterData} belong to this bloom filter.&lt;/li&gt;
+     * &lt;p&gt;
+     * Then set the related {@code bits} positions to 1.
+     * &lt;/p&gt;
+     */
+    public void hashTo(BloomFilterData filterData, BitsArray bits) {
+<span class="nc bnc" id="L145" title="All 2 branches missed.">        if (!isValid(filterData)) {</span>
+<span class="nc" id="L146">            throw new IllegalArgumentException(</span>
+<span class="nc" id="L147">                String.format(&quot;Bloom filter data may not belong to this filter! %s, %s&quot;,</span>
+<span class="nc" id="L148">                    filterData, this.toString())</span>
+            );
+        }
+<span class="nc" id="L151">        hashTo(filterData.getBitPos(), bits);</span>
+<span class="nc" id="L152">    }</span>
+
+    /**
+     * Calculate bit positions of {@code str}, then check all the related {@code bits} positions is 1.
+     *
+     * @return true: all the related {@code bits} positions is 1
+     */
+    public boolean isHit(String str, BitsArray bits) {
+<span class="fc" id="L160">        return isHit(calcBitPositions(str), bits);</span>
+    }
+
+    /**
+     * Check all the related {@code bits} positions is 1.
+     *
+     * @return true: all the related {@code bits} positions is 1
+     */
+    public boolean isHit(int[] bitPositions, BitsArray bits) {
+<span class="fc" id="L169">        check(bits);</span>
+<span class="fc" id="L170">        boolean ret = bits.getBit(bitPositions[0]);</span>
+<span class="fc bfc" id="L171" title="All 2 branches covered.">        for (int i = 1; i &lt; bitPositions.length; i++) {</span>
+<span class="fc" id="L172">            ret &amp;= bits.getBit(bitPositions[i]);</span>
+        }
+<span class="fc" id="L174">        return ret;</span>
+    }
+
+    /**
+     * Check all the related {@code bits} positions is 1.
+     *
+     * @return true: all the related {@code bits} positions is 1
+     */
+    public boolean isHit(BloomFilterData filterData, BitsArray bits) {
+<span class="nc bnc" id="L183" title="All 2 branches missed.">        if (!isValid(filterData)) {</span>
+<span class="nc" id="L184">            throw new IllegalArgumentException(</span>
+<span class="nc" id="L185">                String.format(&quot;Bloom filter data may not belong to this filter! %s, %s&quot;,</span>
+<span class="nc" id="L186">                    filterData, this.toString())</span>
+            );
+        }
+<span class="nc" id="L189">        return isHit(filterData.getBitPos(), bits);</span>
+    }
+
+    /**
+     * Check whether one of {@code bitPositions} has been occupied.
+     *
+     * @return true: if all positions have been occupied.
+     */
+    public boolean checkFalseHit(int[] bitPositions, BitsArray bits) {
+<span class="pc bpc" id="L198" title="1 of 2 branches missed.">        for (int j = 0; j &lt; bitPositions.length; j++) {</span>
+<span class="fc" id="L199">            int pos = bitPositions[j];</span>
+
+            // check position of bits has been set.
+            // that mean no one occupy the position.
+<span class="fc bfc" id="L203" title="All 2 branches covered.">            if (!bits.getBit(pos)) {</span>
+<span class="fc" id="L204">                return false;</span>
+            }
+        }
+
+<span class="nc" id="L208">        return true;</span>
+    }
+
+    protected void check(BitsArray bits) {
+<span class="pc bpc" id="L212" title="1 of 2 branches missed.">        if (bits.bitLength() != this.m) {</span>
+<span class="nc" id="L213">            throw new IllegalArgumentException(</span>
+<span class="nc" id="L214">                String.format(&quot;Length(%d) of bits in BitsArray is not equal to %d!&quot;, bits.bitLength(), this.m)</span>
+            );
+        }
+<span class="fc" id="L217">    }</span>
+
+    /**
+     * Check {@code BloomFilterData} is valid, and belong to this bloom filter.
+     * &lt;li&gt;1. not null&lt;/li&gt;
+     * &lt;li&gt;2. {@link org.apache.rocketmq.filter.util.BloomFilterData#getBitNum} must be equal to {@code m} &lt;/li&gt;
+     * &lt;li&gt;3. {@link org.apache.rocketmq.filter.util.BloomFilterData#getBitPos} is not null&lt;/li&gt;
+     * &lt;li&gt;4. {@link org.apache.rocketmq.filter.util.BloomFilterData#getBitPos}'s length is equal to {@code k}&lt;/li&gt;
+     */
+    public boolean isValid(BloomFilterData filterData) {
+<span class="pc bpc" id="L227" title="1 of 2 branches missed.">        if (filterData == null</span>
+<span class="pc bpc" id="L228" title="1 of 2 branches missed.">            || filterData.getBitNum() != this.m</span>
+<span class="nc bnc" id="L229" title="All 2 branches missed.">            || filterData.getBitPos() == null</span>
+<span class="nc bnc" id="L230" title="All 2 branches missed.">            || filterData.getBitPos().length != this.k) {</span>
+<span class="fc" id="L231">            return false;</span>
+        }
+
+<span class="nc" id="L234">        return true;</span>
+    }
+
+    /**
+     * error rate.
+     */
+    public int getF() {
+<span class="fc" id="L241">        return f;</span>
+    }
+
+    /**
+     * expect mapping num.
+     */
+    public int getN() {
+<span class="fc" id="L248">        return n;</span>
+    }
+
+    /**
+     * hash function num.
+     */
+    public int getK() {
+<span class="fc" id="L255">        return k;</span>
+    }
+
+    /**
+     * total bit num.
+     */
+    public int getM() {
+<span class="fc" id="L262">        return m;</span>
+    }
+
+    @Override
+    public boolean equals(Object o) {
+<span class="pc bpc" id="L267" title="1 of 2 branches missed.">        if (this == o)</span>
+<span class="nc" id="L268">            return true;</span>
+<span class="pc bpc" id="L269" title="1 of 2 branches missed.">        if (!(o instanceof BloomFilter))</span>
+<span class="nc" id="L270">            return false;</span>
+
+<span class="fc" id="L272">        BloomFilter that = (BloomFilter) o;</span>
+
+<span class="fc bfc" id="L274" title="All 2 branches covered.">        if (f != that.f)</span>
+<span class="fc" id="L275">            return false;</span>
+<span class="pc bpc" id="L276" title="1 of 2 branches missed.">        if (k != that.k)</span>
+<span class="nc" id="L277">            return false;</span>
+<span class="fc bfc" id="L278" title="All 2 branches covered.">        if (m != that.m)</span>
+<span class="fc" id="L279">            return false;</span>
+<span class="pc bpc" id="L280" title="1 of 2 branches missed.">        if (n != that.n)</span>
+<span class="nc" id="L281">            return false;</span>
+
+<span class="fc" id="L283">        return true;</span>
+    }
+
+    @Override
+    public int hashCode() {
+<span class="fc" id="L288">        int result = f;</span>
+<span class="fc" id="L289">        result = 31 * result + n;</span>
+<span class="fc" id="L290">        result = 31 * result + k;</span>
+<span class="fc" id="L291">        result = 31 * result + m;</span>
+<span class="fc" id="L292">        return result;</span>
+    }
+
+    @Override
+    public String toString() {
+<span class="nc" id="L297">        return String.format(&quot;f: %d, n: %d, k: %d, m: %d&quot;, f, n, k, m);</span>
+    }
+
+    protected double logMN(double m, double n) {
+<span class="fc" id="L301">        return Math.log(n) / Math.log(m);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.5.201910111838</span></div></body></html>

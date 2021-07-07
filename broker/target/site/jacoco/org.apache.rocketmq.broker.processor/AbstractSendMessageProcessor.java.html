@@ -1,0 +1,334 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AbstractSendMessageProcessor.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">rocketmq-broker 4.8.0</a> &gt; <a href="index.source.html" class="el_package">org.apache.rocketmq.broker.processor</a> &gt; <span class="el_source">AbstractSendMessageProcessor.java</span></div><h1>AbstractSendMessageProcessor.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.rocketmq.broker.processor;
+
+import io.netty.channel.ChannelHandlerContext;
+import java.net.InetSocketAddress;
+import java.net.SocketAddress;
+import java.util.List;
+import java.util.Map;
+import java.util.Random;
+import org.apache.rocketmq.broker.BrokerController;
+import org.apache.rocketmq.broker.mqtrace.SendMessageContext;
+import org.apache.rocketmq.broker.mqtrace.SendMessageHook;
+import org.apache.rocketmq.common.topic.TopicValidator;
+import org.apache.rocketmq.common.MixAll;
+import org.apache.rocketmq.common.TopicConfig;
+import org.apache.rocketmq.common.TopicFilterType;
+import org.apache.rocketmq.common.constant.DBMsgConstants;
+import org.apache.rocketmq.common.constant.LoggerName;
+import org.apache.rocketmq.common.constant.PermName;
+import org.apache.rocketmq.common.help.FAQUrl;
+import org.apache.rocketmq.common.message.MessageAccessor;
+import org.apache.rocketmq.common.message.MessageConst;
+import org.apache.rocketmq.common.message.MessageDecoder;
+import org.apache.rocketmq.common.protocol.NamespaceUtil;
+import org.apache.rocketmq.common.protocol.RequestCode;
+import org.apache.rocketmq.common.protocol.ResponseCode;
+import org.apache.rocketmq.common.protocol.header.SendMessageRequestHeader;
+import org.apache.rocketmq.common.protocol.header.SendMessageRequestHeaderV2;
+import org.apache.rocketmq.common.protocol.header.SendMessageResponseHeader;
+import org.apache.rocketmq.common.sysflag.MessageSysFlag;
+import org.apache.rocketmq.common.sysflag.TopicSysFlag;
+import org.apache.rocketmq.common.utils.ChannelUtil;
+import org.apache.rocketmq.logging.InternalLogger;
+import org.apache.rocketmq.logging.InternalLoggerFactory;
+import org.apache.rocketmq.remoting.common.RemotingHelper;
+import org.apache.rocketmq.remoting.exception.RemotingCommandException;
+import org.apache.rocketmq.remoting.netty.AsyncNettyRequestProcessor;
+import org.apache.rocketmq.remoting.netty.NettyRequestProcessor;
+import org.apache.rocketmq.remoting.protocol.RemotingCommand;
+import org.apache.rocketmq.store.MessageExtBrokerInner;
+
+public abstract class AbstractSendMessageProcessor extends AsyncNettyRequestProcessor implements NettyRequestProcessor {
+<span class="fc" id="L58">    protected static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.BROKER_LOGGER_NAME);</span>
+
+    protected final static int DLQ_NUMS_PER_GROUP = 1;
+    protected final BrokerController brokerController;
+<span class="fc" id="L62">    protected final Random random = new Random(System.currentTimeMillis());</span>
+    protected final SocketAddress storeHost;
+    private List&lt;SendMessageHook&gt; sendMessageHookList;
+
+<span class="fc" id="L66">    public AbstractSendMessageProcessor(final BrokerController brokerController) {</span>
+<span class="fc" id="L67">        this.brokerController = brokerController;</span>
+<span class="fc" id="L68">        this.storeHost =</span>
+<span class="fc" id="L69">            new InetSocketAddress(brokerController.getBrokerConfig().getBrokerIP1(), brokerController</span>
+<span class="fc" id="L70">                .getNettyServerConfig().getListenPort());</span>
+<span class="fc" id="L71">    }</span>
+
+    protected SendMessageContext buildMsgContext(ChannelHandlerContext ctx,
+        SendMessageRequestHeader requestHeader) {
+<span class="fc bfc" id="L75" title="All 2 branches covered.">        if (!this.hasSendMessageHook()) {</span>
+<span class="fc" id="L76">            return null;</span>
+        }
+<span class="fc" id="L78">        String namespace = NamespaceUtil.getNamespaceFromResource(requestHeader.getTopic());</span>
+        SendMessageContext mqtraceContext;
+<span class="fc" id="L80">        mqtraceContext = new SendMessageContext();</span>
+<span class="fc" id="L81">        mqtraceContext.setProducerGroup(requestHeader.getProducerGroup());</span>
+<span class="fc" id="L82">        mqtraceContext.setNamespace(namespace);</span>
+<span class="fc" id="L83">        mqtraceContext.setTopic(requestHeader.getTopic());</span>
+<span class="fc" id="L84">        mqtraceContext.setMsgProps(requestHeader.getProperties());</span>
+<span class="fc" id="L85">        mqtraceContext.setBornHost(RemotingHelper.parseChannelRemoteAddr(ctx.channel()));</span>
+<span class="fc" id="L86">        mqtraceContext.setBrokerAddr(this.brokerController.getBrokerAddr());</span>
+<span class="fc" id="L87">        mqtraceContext.setBrokerRegionId(this.brokerController.getBrokerConfig().getRegionId());</span>
+<span class="fc" id="L88">        mqtraceContext.setBornTimeStamp(requestHeader.getBornTimestamp());</span>
+
+<span class="fc" id="L90">        Map&lt;String, String&gt; properties = MessageDecoder.string2messageProperties(requestHeader.getProperties());</span>
+<span class="fc" id="L91">        String uniqueKey = properties.get(MessageConst.PROPERTY_UNIQ_CLIENT_MESSAGE_ID_KEYIDX);</span>
+<span class="fc" id="L92">        properties.put(MessageConst.PROPERTY_MSG_REGION, this.brokerController.getBrokerConfig().getRegionId());</span>
+<span class="fc" id="L93">        properties.put(MessageConst.PROPERTY_TRACE_SWITCH, String.valueOf(this.brokerController.getBrokerConfig().isTraceOn()));</span>
+<span class="fc" id="L94">        requestHeader.setProperties(MessageDecoder.messageProperties2String(properties));</span>
+
+<span class="pc bpc" id="L96" title="1 of 2 branches missed.">        if (uniqueKey == null) {</span>
+<span class="fc" id="L97">            uniqueKey = &quot;&quot;;</span>
+        }
+<span class="fc" id="L99">        mqtraceContext.setMsgUniqueKey(uniqueKey);</span>
+<span class="fc" id="L100">        return mqtraceContext;</span>
+    }
+
+    public boolean hasSendMessageHook() {
+<span class="pc bpc" id="L104" title="1 of 4 branches missed.">        return sendMessageHookList != null &amp;&amp; !this.sendMessageHookList.isEmpty();</span>
+    }
+
+    protected MessageExtBrokerInner buildInnerMsg(final ChannelHandlerContext ctx,
+        final SendMessageRequestHeader requestHeader, final byte[] body, TopicConfig topicConfig) {
+<span class="nc" id="L109">        int queueIdInt = requestHeader.getQueueId();</span>
+<span class="nc bnc" id="L110" title="All 2 branches missed.">        if (queueIdInt &lt; 0) {</span>
+<span class="nc" id="L111">            queueIdInt = Math.abs(this.random.nextInt() % 99999999) % topicConfig.getWriteQueueNums();</span>
+        }
+<span class="nc" id="L113">        int sysFlag = requestHeader.getSysFlag();</span>
+
+<span class="nc bnc" id="L115" title="All 2 branches missed.">        if (TopicFilterType.MULTI_TAG == topicConfig.getTopicFilterType()) {</span>
+<span class="nc" id="L116">            sysFlag |= MessageSysFlag.MULTI_TAGS_FLAG;</span>
+        }
+
+<span class="nc" id="L119">        MessageExtBrokerInner msgInner = new MessageExtBrokerInner();</span>
+<span class="nc" id="L120">        msgInner.setTopic(requestHeader.getTopic());</span>
+<span class="nc" id="L121">        msgInner.setBody(body);</span>
+<span class="nc" id="L122">        msgInner.setFlag(requestHeader.getFlag());</span>
+<span class="nc" id="L123">        MessageAccessor.setProperties(msgInner,</span>
+<span class="nc" id="L124">            MessageDecoder.string2messageProperties(requestHeader.getProperties()));</span>
+<span class="nc" id="L125">        msgInner.setPropertiesString(requestHeader.getProperties());</span>
+<span class="nc" id="L126">        msgInner.setTagsCode(MessageExtBrokerInner.tagsString2tagsCode(topicConfig.getTopicFilterType(),</span>
+<span class="nc" id="L127">            msgInner.getTags()));</span>
+
+<span class="nc" id="L129">        msgInner.setQueueId(queueIdInt);</span>
+<span class="nc" id="L130">        msgInner.setSysFlag(sysFlag);</span>
+<span class="nc" id="L131">        msgInner.setBornTimestamp(requestHeader.getBornTimestamp());</span>
+<span class="nc" id="L132">        msgInner.setBornHost(ctx.channel().remoteAddress());</span>
+<span class="nc" id="L133">        msgInner.setStoreHost(this.getStoreHost());</span>
+<span class="nc bnc" id="L134" title="All 2 branches missed.">        msgInner.setReconsumeTimes(requestHeader.getReconsumeTimes() == null ? 0 : requestHeader</span>
+<span class="nc" id="L135">            .getReconsumeTimes());</span>
+<span class="nc" id="L136">        return msgInner;</span>
+    }
+
+    public SocketAddress getStoreHost() {
+<span class="fc" id="L140">        return storeHost;</span>
+    }
+
+    protected RemotingCommand msgContentCheck(final ChannelHandlerContext ctx,
+        final SendMessageRequestHeader requestHeader, RemotingCommand request,
+        final RemotingCommand response) {
+<span class="nc bnc" id="L146" title="All 2 branches missed.">        if (requestHeader.getTopic().length() &gt; Byte.MAX_VALUE) {</span>
+<span class="nc" id="L147">            log.warn(&quot;putMessage message topic length too long {}&quot;, requestHeader.getTopic().length());</span>
+<span class="nc" id="L148">            response.setCode(ResponseCode.MESSAGE_ILLEGAL);</span>
+<span class="nc" id="L149">            return response;</span>
+        }
+<span class="nc bnc" id="L151" title="All 4 branches missed.">        if (requestHeader.getProperties() != null &amp;&amp; requestHeader.getProperties().length() &gt; Short.MAX_VALUE) {</span>
+<span class="nc" id="L152">            log.warn(&quot;putMessage message properties length too long {}&quot;, requestHeader.getProperties().length());</span>
+<span class="nc" id="L153">            response.setCode(ResponseCode.MESSAGE_ILLEGAL);</span>
+<span class="nc" id="L154">            return response;</span>
+        }
+<span class="nc bnc" id="L156" title="All 2 branches missed.">        if (request.getBody().length &gt; DBMsgConstants.MAX_BODY_SIZE) {</span>
+<span class="nc" id="L157">            log.warn(&quot; topic {}  msg body size {}  from {}&quot;, requestHeader.getTopic(),</span>
+<span class="nc" id="L158">                request.getBody().length, ChannelUtil.getRemoteIp(ctx.channel()));</span>
+<span class="nc" id="L159">            response.setRemark(&quot;msg body must be less 64KB&quot;);</span>
+<span class="nc" id="L160">            response.setCode(ResponseCode.MESSAGE_ILLEGAL);</span>
+<span class="nc" id="L161">            return response;</span>
+        }
+<span class="nc" id="L163">        return response;</span>
+    }
+
+    protected RemotingCommand msgCheck(final ChannelHandlerContext ctx,
+        final SendMessageRequestHeader requestHeader, final RemotingCommand response) {
+<span class="pc bpc" id="L168" title="1 of 2 branches missed.">        if (!PermName.isWriteable(this.brokerController.getBrokerConfig().getBrokerPermission())</span>
+<span class="nc bnc" id="L169" title="All 2 branches missed.">            &amp;&amp; this.brokerController.getTopicConfigManager().isOrderTopic(requestHeader.getTopic())) {</span>
+<span class="nc" id="L170">            response.setCode(ResponseCode.NO_PERMISSION);</span>
+<span class="nc" id="L171">            response.setRemark(&quot;the broker[&quot; + this.brokerController.getBrokerConfig().getBrokerIP1()</span>
+                + &quot;] sending message is forbidden&quot;);
+<span class="nc" id="L173">            return response;</span>
+        }
+
+<span class="pc bpc" id="L176" title="1 of 2 branches missed.">        if (!TopicValidator.validateTopic(requestHeader.getTopic(), response)) {</span>
+<span class="nc" id="L177">            return response;</span>
+        }
+<span class="pc bpc" id="L179" title="1 of 2 branches missed.">        if (TopicValidator.isNotAllowedSendTopic(requestHeader.getTopic(), response)) {</span>
+<span class="nc" id="L180">            return response;</span>
+        }
+
+<span class="fc" id="L183">        TopicConfig topicConfig =</span>
+<span class="fc" id="L184">            this.brokerController.getTopicConfigManager().selectTopicConfig(requestHeader.getTopic());</span>
+<span class="pc bpc" id="L185" title="1 of 2 branches missed.">        if (null == topicConfig) {</span>
+<span class="fc" id="L186">            int topicSysFlag = 0;</span>
+<span class="pc bpc" id="L187" title="1 of 2 branches missed.">            if (requestHeader.isUnitMode()) {</span>
+<span class="nc bnc" id="L188" title="All 2 branches missed.">                if (requestHeader.getTopic().startsWith(MixAll.RETRY_GROUP_TOPIC_PREFIX)) {</span>
+<span class="nc" id="L189">                    topicSysFlag = TopicSysFlag.buildSysFlag(false, true);</span>
+                } else {
+<span class="nc" id="L191">                    topicSysFlag = TopicSysFlag.buildSysFlag(true, false);</span>
+                }
+            }
+
+<span class="fc" id="L195">            log.warn(&quot;the topic {} not exist, producer: {}&quot;, requestHeader.getTopic(), ctx.channel().remoteAddress());</span>
+<span class="fc" id="L196">            topicConfig = this.brokerController.getTopicConfigManager().createTopicInSendMessageMethod(</span>
+<span class="fc" id="L197">                requestHeader.getTopic(),</span>
+<span class="fc" id="L198">                requestHeader.getDefaultTopic(),</span>
+<span class="fc" id="L199">                RemotingHelper.parseChannelRemoteAddr(ctx.channel()),</span>
+<span class="fc" id="L200">                requestHeader.getDefaultTopicQueueNums(), topicSysFlag);</span>
+
+<span class="pc bpc" id="L202" title="1 of 2 branches missed.">            if (null == topicConfig) {</span>
+<span class="nc bnc" id="L203" title="All 2 branches missed.">                if (requestHeader.getTopic().startsWith(MixAll.RETRY_GROUP_TOPIC_PREFIX)) {</span>
+<span class="nc" id="L204">                    topicConfig =</span>
+<span class="nc" id="L205">                        this.brokerController.getTopicConfigManager().createTopicInSendMessageBackMethod(</span>
+<span class="nc" id="L206">                            requestHeader.getTopic(), 1, PermName.PERM_WRITE | PermName.PERM_READ,</span>
+                            topicSysFlag);
+                }
+            }
+
+<span class="pc bpc" id="L211" title="1 of 2 branches missed.">            if (null == topicConfig) {</span>
+<span class="nc" id="L212">                response.setCode(ResponseCode.TOPIC_NOT_EXIST);</span>
+<span class="nc" id="L213">                response.setRemark(&quot;topic[&quot; + requestHeader.getTopic() + &quot;] not exist, apply first please!&quot;</span>
+<span class="nc" id="L214">                    + FAQUrl.suggestTodo(FAQUrl.APPLY_TOPIC_URL));</span>
+<span class="nc" id="L215">                return response;</span>
+            }
+        }
+
+<span class="fc" id="L219">        int queueIdInt = requestHeader.getQueueId();</span>
+<span class="fc" id="L220">        int idValid = Math.max(topicConfig.getWriteQueueNums(), topicConfig.getReadQueueNums());</span>
+<span class="pc bpc" id="L221" title="1 of 2 branches missed.">        if (queueIdInt &gt;= idValid) {</span>
+<span class="nc" id="L222">            String errorInfo = String.format(&quot;request queueId[%d] is illegal, %s Producer: %s&quot;,</span>
+<span class="nc" id="L223">                queueIdInt,</span>
+<span class="nc" id="L224">                topicConfig.toString(),</span>
+<span class="nc" id="L225">                RemotingHelper.parseChannelRemoteAddr(ctx.channel()));</span>
+
+<span class="nc" id="L227">            log.warn(errorInfo);</span>
+<span class="nc" id="L228">            response.setCode(ResponseCode.SYSTEM_ERROR);</span>
+<span class="nc" id="L229">            response.setRemark(errorInfo);</span>
+
+<span class="nc" id="L231">            return response;</span>
+        }
+<span class="fc" id="L233">        return response;</span>
+    }
+
+    public void registerSendMessageHook(List&lt;SendMessageHook&gt; sendMessageHookList) {
+<span class="fc" id="L237">        this.sendMessageHookList = sendMessageHookList;</span>
+<span class="fc" id="L238">    }</span>
+
+    protected void doResponse(ChannelHandlerContext ctx, RemotingCommand request,
+        final RemotingCommand response) {
+<span class="pc bpc" id="L242" title="1 of 2 branches missed.">        if (!request.isOnewayRPC()) {</span>
+            try {
+<span class="fc" id="L244">                ctx.writeAndFlush(response);</span>
+<span class="nc" id="L245">            } catch (Throwable e) {</span>
+<span class="nc" id="L246">                log.error(&quot;SendMessageProcessor process request over, but response failed&quot;, e);</span>
+<span class="nc" id="L247">                log.error(request.toString());</span>
+<span class="nc" id="L248">                log.error(response.toString());</span>
+<span class="fc" id="L249">            }</span>
+        }
+<span class="fc" id="L251">    }</span>
+
+    public void executeSendMessageHookBefore(final ChannelHandlerContext ctx, final RemotingCommand request,
+        SendMessageContext context) {
+<span class="fc bfc" id="L255" title="All 2 branches covered.">        if (hasSendMessageHook()) {</span>
+<span class="fc bfc" id="L256" title="All 2 branches covered.">            for (SendMessageHook hook : this.sendMessageHookList) {</span>
+                try {
+<span class="fc" id="L258">                    final SendMessageRequestHeader requestHeader = parseRequestHeader(request);</span>
+
+<span class="fc" id="L260">                    String namespace = NamespaceUtil.getNamespaceFromResource(requestHeader.getTopic());</span>
+<span class="pc bpc" id="L261" title="1 of 2 branches missed.">                    if (null != requestHeader) {</span>
+<span class="fc" id="L262">                        context.setNamespace(namespace);</span>
+<span class="fc" id="L263">                        context.setProducerGroup(requestHeader.getProducerGroup());</span>
+<span class="fc" id="L264">                        context.setTopic(requestHeader.getTopic());</span>
+<span class="fc" id="L265">                        context.setBodyLength(request.getBody().length);</span>
+<span class="fc" id="L266">                        context.setMsgProps(requestHeader.getProperties());</span>
+<span class="fc" id="L267">                        context.setBornHost(RemotingHelper.parseChannelRemoteAddr(ctx.channel()));</span>
+<span class="fc" id="L268">                        context.setBrokerAddr(this.brokerController.getBrokerAddr());</span>
+<span class="fc" id="L269">                        context.setQueueId(requestHeader.getQueueId());</span>
+                    }
+
+<span class="fc" id="L272">                    hook.sendMessageBefore(context);</span>
+<span class="pc bpc" id="L273" title="1 of 2 branches missed.">                    if (requestHeader != null) {</span>
+<span class="fc" id="L274">                        requestHeader.setProperties(context.getMsgProps());</span>
+                    }
+<span class="nc" id="L276">                } catch (Throwable e) {</span>
+                    // Ignore
+<span class="fc" id="L278">                }</span>
+<span class="fc" id="L279">            }</span>
+        }
+<span class="fc" id="L281">    }</span>
+
+    protected SendMessageRequestHeader parseRequestHeader(RemotingCommand request)
+        throws RemotingCommandException {
+
+<span class="fc" id="L286">        SendMessageRequestHeaderV2 requestHeaderV2 = null;</span>
+<span class="fc" id="L287">        SendMessageRequestHeader requestHeader = null;</span>
+<span class="pc bpc" id="L288" title="2 of 3 branches missed.">        switch (request.getCode()) {</span>
+            case RequestCode.SEND_BATCH_MESSAGE:
+            case RequestCode.SEND_MESSAGE_V2:
+<span class="nc" id="L291">                requestHeaderV2 =</span>
+                    (SendMessageRequestHeaderV2) request
+<span class="nc" id="L293">                        .decodeCommandCustomHeader(SendMessageRequestHeaderV2.class);</span>
+            case RequestCode.SEND_MESSAGE:
+<span class="pc bpc" id="L295" title="1 of 2 branches missed.">                if (null == requestHeaderV2) {</span>
+<span class="fc" id="L296">                    requestHeader =</span>
+                        (SendMessageRequestHeader) request
+<span class="fc" id="L298">                            .decodeCommandCustomHeader(SendMessageRequestHeader.class);</span>
+                } else {
+<span class="nc" id="L300">                    requestHeader = SendMessageRequestHeaderV2.createSendMessageRequestHeaderV1(requestHeaderV2);</span>
+                }
+            default:
+                break;
+        }
+<span class="fc" id="L305">        return requestHeader;</span>
+    }
+
+    public void executeSendMessageHookAfter(final RemotingCommand response, final SendMessageContext context) {
+<span class="pc bpc" id="L309" title="1 of 2 branches missed.">        if (hasSendMessageHook()) {</span>
+<span class="nc bnc" id="L310" title="All 2 branches missed.">            for (SendMessageHook hook : this.sendMessageHookList) {</span>
+                try {
+<span class="nc bnc" id="L312" title="All 2 branches missed.">                    if (response != null) {</span>
+<span class="nc" id="L313">                        final SendMessageResponseHeader responseHeader =</span>
+<span class="nc" id="L314">                            (SendMessageResponseHeader) response.readCustomHeader();</span>
+<span class="nc" id="L315">                        context.setMsgId(responseHeader.getMsgId());</span>
+<span class="nc" id="L316">                        context.setQueueId(responseHeader.getQueueId());</span>
+<span class="nc" id="L317">                        context.setQueueOffset(responseHeader.getQueueOffset());</span>
+<span class="nc" id="L318">                        context.setCode(response.getCode());</span>
+<span class="nc" id="L319">                        context.setErrorMsg(response.getRemark());</span>
+                    }
+<span class="nc" id="L321">                    hook.sendMessageAfter(context);</span>
+<span class="nc" id="L322">                } catch (Throwable e) {</span>
+                    // Ignore
+<span class="nc" id="L324">                }</span>
+<span class="nc" id="L325">            }</span>
+        }
+<span class="fc" id="L327">    }</span>
+
+    @Override
+    public boolean rejectRequest() {
+<span class="nc" id="L331">        return false;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.5.201910111838</span></div></body></html>

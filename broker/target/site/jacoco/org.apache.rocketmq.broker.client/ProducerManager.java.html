@@ -1,0 +1,178 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ProducerManager.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">rocketmq-broker 4.8.0</a> &gt; <a href="index.source.html" class="el_package">org.apache.rocketmq.broker.client</a> &gt; <span class="el_source">ProducerManager.java</span></div><h1>ProducerManager.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.rocketmq.broker.client;
+
+import io.netty.channel.Channel;
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Map.Entry;
+import java.util.concurrent.ConcurrentHashMap;
+import org.apache.rocketmq.broker.util.PositiveAtomicCounter;
+import org.apache.rocketmq.common.constant.LoggerName;
+import org.apache.rocketmq.logging.InternalLogger;
+import org.apache.rocketmq.logging.InternalLoggerFactory;
+import org.apache.rocketmq.remoting.common.RemotingHelper;
+import org.apache.rocketmq.remoting.common.RemotingUtil;
+
+public class ProducerManager {
+<span class="fc" id="L34">    private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.BROKER_LOGGER_NAME);</span>
+    private static final long CHANNEL_EXPIRED_TIMEOUT = 1000 * 120;
+    private static final int GET_AVAILABLE_CHANNEL_RETRY_COUNT = 3;
+<span class="fc" id="L37">    private final ConcurrentHashMap&lt;String /* group name */, ConcurrentHashMap&lt;Channel, ClientChannelInfo&gt;&gt; groupChannelTable =</span>
+        new ConcurrentHashMap&lt;&gt;();
+<span class="fc" id="L39">    private final ConcurrentHashMap&lt;String, Channel&gt; clientChannelTable = new ConcurrentHashMap&lt;&gt;();</span>
+<span class="fc" id="L40">    private PositiveAtomicCounter positiveAtomicCounter = new PositiveAtomicCounter();</span>
+
+<span class="fc" id="L42">    public ProducerManager() {</span>
+<span class="fc" id="L43">    }</span>
+
+    public ConcurrentHashMap&lt;String, ConcurrentHashMap&lt;Channel, ClientChannelInfo&gt;&gt; getGroupChannelTable() {
+<span class="fc" id="L46">        return groupChannelTable;</span>
+    }
+
+    public void scanNotActiveChannel() {
+<span class="fc bfc" id="L50" title="All 2 branches covered.">        for (final Map.Entry&lt;String, ConcurrentHashMap&lt;Channel, ClientChannelInfo&gt;&gt; entry : this.groupChannelTable</span>
+<span class="fc" id="L51">                .entrySet()) {</span>
+<span class="fc" id="L52">            final String group = entry.getKey();</span>
+<span class="fc" id="L53">            final ConcurrentHashMap&lt;Channel, ClientChannelInfo&gt; chlMap = entry.getValue();</span>
+
+<span class="fc" id="L55">            Iterator&lt;Entry&lt;Channel, ClientChannelInfo&gt;&gt; it = chlMap.entrySet().iterator();</span>
+<span class="fc bfc" id="L56" title="All 2 branches covered.">            while (it.hasNext()) {</span>
+<span class="fc" id="L57">                Entry&lt;Channel, ClientChannelInfo&gt; item = it.next();</span>
+                // final Integer id = item.getKey();
+<span class="fc" id="L59">                final ClientChannelInfo info = item.getValue();</span>
+
+<span class="fc" id="L61">                long diff = System.currentTimeMillis() - info.getLastUpdateTimestamp();</span>
+<span class="pc bpc" id="L62" title="1 of 2 branches missed.">                if (diff &gt; CHANNEL_EXPIRED_TIMEOUT) {</span>
+<span class="fc" id="L63">                    it.remove();</span>
+<span class="fc" id="L64">                    clientChannelTable.remove(info.getClientId());</span>
+<span class="fc" id="L65">                    log.warn(</span>
+                            &quot;SCAN: remove expired channel[{}] from ProducerManager groupChannelTable, producer group name: {}&quot;,
+<span class="fc" id="L67">                            RemotingHelper.parseChannelRemoteAddr(info.getChannel()), group);</span>
+<span class="fc" id="L68">                    RemotingUtil.closeChannel(info.getChannel());</span>
+                }
+<span class="fc" id="L70">            }</span>
+<span class="fc" id="L71">        }</span>
+<span class="fc" id="L72">    }</span>
+
+    public synchronized void doChannelCloseEvent(final String remoteAddr, final Channel channel) {
+<span class="pc bpc" id="L75" title="1 of 2 branches missed.">        if (channel != null) {</span>
+<span class="fc bfc" id="L76" title="All 2 branches covered.">            for (final Map.Entry&lt;String, ConcurrentHashMap&lt;Channel, ClientChannelInfo&gt;&gt; entry : this.groupChannelTable</span>
+<span class="fc" id="L77">                    .entrySet()) {</span>
+<span class="fc" id="L78">                final String group = entry.getKey();</span>
+<span class="fc" id="L79">                final ConcurrentHashMap&lt;Channel, ClientChannelInfo&gt; clientChannelInfoTable =</span>
+<span class="fc" id="L80">                        entry.getValue();</span>
+<span class="fc" id="L81">                final ClientChannelInfo clientChannelInfo =</span>
+<span class="fc" id="L82">                        clientChannelInfoTable.remove(channel);</span>
+<span class="pc bpc" id="L83" title="1 of 2 branches missed.">                if (clientChannelInfo != null) {</span>
+<span class="fc" id="L84">                    clientChannelTable.remove(clientChannelInfo.getClientId());</span>
+<span class="fc" id="L85">                    log.info(</span>
+                            &quot;NETTY EVENT: remove channel[{}][{}] from ProducerManager groupChannelTable, producer group: {}&quot;,
+<span class="fc" id="L87">                            clientChannelInfo.toString(), remoteAddr, group);</span>
+                }
+
+<span class="fc" id="L90">            }</span>
+        }
+<span class="fc" id="L92">    }</span>
+
+    public synchronized void registerProducer(final String group, final ClientChannelInfo clientChannelInfo) {
+<span class="fc" id="L95">        ClientChannelInfo clientChannelInfoFound = null;</span>
+
+<span class="fc" id="L97">        ConcurrentHashMap&lt;Channel, ClientChannelInfo&gt; channelTable = this.groupChannelTable.get(group);</span>
+<span class="fc bfc" id="L98" title="All 2 branches covered.">        if (null == channelTable) {</span>
+<span class="fc" id="L99">            channelTable = new ConcurrentHashMap&lt;&gt;();</span>
+<span class="fc" id="L100">            this.groupChannelTable.put(group, channelTable);</span>
+        }
+
+<span class="fc" id="L103">        clientChannelInfoFound = channelTable.get(clientChannelInfo.getChannel());</span>
+<span class="fc bfc" id="L104" title="All 2 branches covered.">        if (null == clientChannelInfoFound) {</span>
+<span class="fc" id="L105">            channelTable.put(clientChannelInfo.getChannel(), clientChannelInfo);</span>
+<span class="fc" id="L106">            clientChannelTable.put(clientChannelInfo.getClientId(), clientChannelInfo.getChannel());</span>
+<span class="fc" id="L107">            log.info(&quot;new producer connected, group: {} channel: {}&quot;, group,</span>
+<span class="fc" id="L108">                    clientChannelInfo.toString());</span>
+        }
+
+
+<span class="fc bfc" id="L112" title="All 2 branches covered.">        if (clientChannelInfoFound != null) {</span>
+<span class="fc" id="L113">            clientChannelInfoFound.setLastUpdateTimestamp(System.currentTimeMillis());</span>
+        }
+<span class="fc" id="L115">    }</span>
+
+    public synchronized void unregisterProducer(final String group, final ClientChannelInfo clientChannelInfo) {
+<span class="fc" id="L118">        ConcurrentHashMap&lt;Channel, ClientChannelInfo&gt; channelTable = this.groupChannelTable.get(group);</span>
+<span class="pc bpc" id="L119" title="2 of 4 branches missed.">        if (null != channelTable &amp;&amp; !channelTable.isEmpty()) {</span>
+<span class="fc" id="L120">            ClientChannelInfo old = channelTable.remove(clientChannelInfo.getChannel());</span>
+<span class="fc" id="L121">            clientChannelTable.remove(clientChannelInfo.getClientId());</span>
+<span class="pc bpc" id="L122" title="1 of 2 branches missed.">            if (old != null) {</span>
+<span class="fc" id="L123">                log.info(&quot;unregister a producer[{}] from groupChannelTable {}&quot;, group,</span>
+<span class="fc" id="L124">                        clientChannelInfo.toString());</span>
+            }
+
+<span class="pc bpc" id="L127" title="1 of 2 branches missed.">            if (channelTable.isEmpty()) {</span>
+<span class="fc" id="L128">                this.groupChannelTable.remove(group);</span>
+<span class="fc" id="L129">                log.info(&quot;unregister a producer group[{}] from groupChannelTable&quot;, group);</span>
+            }
+        }
+<span class="fc" id="L132">    }</span>
+
+    public Channel getAvailableChannel(String groupId) {
+<span class="fc bfc" id="L135" title="All 2 branches covered.">        if (groupId == null) {</span>
+<span class="fc" id="L136">            return null;</span>
+        }
+        List&lt;Channel&gt; channelList;
+<span class="fc" id="L139">        ConcurrentHashMap&lt;Channel, ClientChannelInfo&gt; channelClientChannelInfoHashMap = groupChannelTable.get(groupId);</span>
+<span class="pc bpc" id="L140" title="1 of 2 branches missed.">        if (channelClientChannelInfoHashMap != null) {</span>
+<span class="fc" id="L141">            channelList = new ArrayList&lt;&gt;(channelClientChannelInfoHashMap.keySet());</span>
+        } else {
+<span class="nc" id="L143">            log.warn(&quot;Check transaction failed, channel table is empty. groupId={}&quot;, groupId);</span>
+<span class="nc" id="L144">            return null;</span>
+        }
+
+<span class="fc" id="L147">        int size = channelList.size();</span>
+<span class="pc bpc" id="L148" title="1 of 2 branches missed.">        if (0 == size) {</span>
+<span class="nc" id="L149">            log.warn(&quot;Channel list is empty. groupId={}&quot;, groupId);</span>
+<span class="nc" id="L150">            return null;</span>
+        }
+
+<span class="fc" id="L153">        Channel lastActiveChannel = null;</span>
+
+<span class="fc" id="L155">        int index = positiveAtomicCounter.incrementAndGet() % size;</span>
+<span class="fc" id="L156">        Channel channel = channelList.get(index);</span>
+<span class="fc" id="L157">        int count = 0;</span>
+<span class="fc bfc" id="L158" title="All 4 branches covered.">        boolean isOk = channel.isActive() &amp;&amp; channel.isWritable();</span>
+<span class="fc bfc" id="L159" title="All 2 branches covered.">        while (count++ &lt; GET_AVAILABLE_CHANNEL_RETRY_COUNT) {</span>
+<span class="fc bfc" id="L160" title="All 2 branches covered.">            if (isOk) {</span>
+<span class="fc" id="L161">                return channel;</span>
+            }
+<span class="fc bfc" id="L163" title="All 2 branches covered.">            if (channel.isActive()) {</span>
+<span class="fc" id="L164">                lastActiveChannel = channel;</span>
+            }
+<span class="fc" id="L166">            index = (++index) % size;</span>
+<span class="fc" id="L167">            channel = channelList.get(index);</span>
+<span class="pc bpc" id="L168" title="1 of 4 branches missed.">            isOk = channel.isActive() &amp;&amp; channel.isWritable();</span>
+        }
+
+<span class="fc" id="L171">        return lastActiveChannel;</span>
+    }
+
+    public Channel findChannel(String clientId) {
+<span class="fc" id="L175">        return clientChannelTable.get(clientId);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.5.201910111838</span></div></body></html>

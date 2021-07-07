@@ -1,0 +1,195 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ClientConfig.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">rocketmq-openmessaging 4.8.0</a> &gt; <a href="index.source.html" class="el_package">io.openmessaging.rocketmq.config</a> &gt; <span class="el_source">ClientConfig.java</span></div><h1>ClientConfig.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package io.openmessaging.rocketmq.config;
+
+import io.openmessaging.OMSBuiltinKeys;
+import io.openmessaging.rocketmq.domain.NonStandardKeys;
+
+<span class="fc" id="L22">public class ClientConfig implements OMSBuiltinKeys, NonStandardKeys {</span>
+    private String driverImpl;
+    private String accessPoints;
+    private String namespace;
+    private String producerId;
+    private String consumerId;
+<span class="fc" id="L28">    private int operationTimeout = 5000;</span>
+    private String region;
+    private String routingSource;
+    private String routingDestination;
+    private String routingExpression;
+    private String rmqConsumerGroup;
+<span class="fc" id="L34">    private String rmqProducerGroup = &quot;__OMS_PRODUCER_DEFAULT_GROUP&quot;;</span>
+<span class="fc" id="L35">    private int rmqMaxRedeliveryTimes = 16;</span>
+<span class="fc" id="L36">    private int rmqMessageConsumeTimeout = 15; //In minutes</span>
+<span class="fc" id="L37">    private int rmqMaxConsumeThreadNums = 64;</span>
+<span class="fc" id="L38">    private int rmqMinConsumeThreadNums = 20;</span>
+    private String rmqMessageDestination;
+<span class="fc" id="L40">    private int rmqPullMessageBatchNums = 32;</span>
+<span class="fc" id="L41">    private int rmqPullMessageCacheCapacity = 1000;</span>
+
+    public String getDriverImpl() {
+<span class="nc" id="L44">        return driverImpl;</span>
+    }
+
+    public void setDriverImpl(final String driverImpl) {
+<span class="fc" id="L48">        this.driverImpl = driverImpl;</span>
+<span class="fc" id="L49">    }</span>
+
+    public String getAccessPoints() {
+<span class="nc" id="L52">        return accessPoints;</span>
+    }
+
+    public void setAccessPoints(final String accessPoints) {
+<span class="fc" id="L56">        this.accessPoints = accessPoints;</span>
+<span class="fc" id="L57">    }</span>
+
+    public String getNamespace() {
+<span class="nc" id="L60">        return namespace;</span>
+    }
+
+    public void setNamespace(final String namespace) {
+<span class="nc" id="L64">        this.namespace = namespace;</span>
+<span class="nc" id="L65">    }</span>
+
+    public String getProducerId() {
+<span class="nc" id="L68">        return producerId;</span>
+    }
+
+    public void setProducerId(final String producerId) {
+<span class="nc" id="L72">        this.producerId = producerId;</span>
+<span class="nc" id="L73">    }</span>
+
+    public String getConsumerId() {
+<span class="fc" id="L76">        return consumerId;</span>
+    }
+
+    public void setConsumerId(final String consumerId) {
+<span class="fc" id="L80">        this.consumerId = consumerId;</span>
+<span class="fc" id="L81">    }</span>
+
+    public int getOperationTimeout() {
+<span class="fc" id="L84">        return operationTimeout;</span>
+    }
+
+    public void setOperationTimeout(final int operationTimeout) {
+<span class="fc" id="L88">        this.operationTimeout = operationTimeout;</span>
+<span class="fc" id="L89">    }</span>
+
+    public String getRoutingSource() {
+<span class="nc" id="L92">        return routingSource;</span>
+    }
+
+    public void setRoutingSource(final String routingSource) {
+<span class="nc" id="L96">        this.routingSource = routingSource;</span>
+<span class="nc" id="L97">    }</span>
+
+    public String getRmqConsumerGroup() {
+<span class="fc" id="L100">        return rmqConsumerGroup;</span>
+    }
+
+    public void setRmqConsumerGroup(final String rmqConsumerGroup) {
+<span class="fc" id="L104">        this.rmqConsumerGroup = rmqConsumerGroup;</span>
+<span class="fc" id="L105">    }</span>
+
+    public String getRmqProducerGroup() {
+<span class="fc" id="L108">        return rmqProducerGroup;</span>
+    }
+
+    public void setRmqProducerGroup(final String rmqProducerGroup) {
+<span class="nc" id="L112">        this.rmqProducerGroup = rmqProducerGroup;</span>
+<span class="nc" id="L113">    }</span>
+
+    public int getRmqMaxRedeliveryTimes() {
+<span class="fc" id="L116">        return rmqMaxRedeliveryTimes;</span>
+    }
+
+    public void setRmqMaxRedeliveryTimes(final int rmqMaxRedeliveryTimes) {
+<span class="fc" id="L120">        this.rmqMaxRedeliveryTimes = rmqMaxRedeliveryTimes;</span>
+<span class="fc" id="L121">    }</span>
+
+    public int getRmqMessageConsumeTimeout() {
+<span class="fc" id="L124">        return rmqMessageConsumeTimeout;</span>
+    }
+
+    public void setRmqMessageConsumeTimeout(final int rmqMessageConsumeTimeout) {
+<span class="fc" id="L128">        this.rmqMessageConsumeTimeout = rmqMessageConsumeTimeout;</span>
+<span class="fc" id="L129">    }</span>
+
+    public int getRmqMaxConsumeThreadNums() {
+<span class="fc" id="L132">        return rmqMaxConsumeThreadNums;</span>
+    }
+
+    public void setRmqMaxConsumeThreadNums(final int rmqMaxConsumeThreadNums) {
+<span class="nc" id="L136">        this.rmqMaxConsumeThreadNums = rmqMaxConsumeThreadNums;</span>
+<span class="nc" id="L137">    }</span>
+
+    public int getRmqMinConsumeThreadNums() {
+<span class="fc" id="L140">        return rmqMinConsumeThreadNums;</span>
+    }
+
+    public void setRmqMinConsumeThreadNums(final int rmqMinConsumeThreadNums) {
+<span class="nc" id="L144">        this.rmqMinConsumeThreadNums = rmqMinConsumeThreadNums;</span>
+<span class="nc" id="L145">    }</span>
+
+    public String getRmqMessageDestination() {
+<span class="nc" id="L148">        return rmqMessageDestination;</span>
+    }
+
+    public void setRmqMessageDestination(final String rmqMessageDestination) {
+<span class="nc" id="L152">        this.rmqMessageDestination = rmqMessageDestination;</span>
+<span class="nc" id="L153">    }</span>
+
+    public int getRmqPullMessageBatchNums() {
+<span class="fc" id="L156">        return rmqPullMessageBatchNums;</span>
+    }
+
+    public void setRmqPullMessageBatchNums(final int rmqPullMessageBatchNums) {
+<span class="fc" id="L160">        this.rmqPullMessageBatchNums = rmqPullMessageBatchNums;</span>
+<span class="fc" id="L161">    }</span>
+
+    public int getRmqPullMessageCacheCapacity() {
+<span class="fc" id="L164">        return rmqPullMessageCacheCapacity;</span>
+    }
+
+    public void setRmqPullMessageCacheCapacity(final int rmqPullMessageCacheCapacity) {
+<span class="fc" id="L168">        this.rmqPullMessageCacheCapacity = rmqPullMessageCacheCapacity;</span>
+<span class="fc" id="L169">    }</span>
+
+    public String getRegion() {
+<span class="nc" id="L172">        return region;</span>
+    }
+
+    public void setRegion(String region) {
+<span class="fc" id="L176">        this.region = region;</span>
+<span class="fc" id="L177">    }</span>
+
+    public String getRoutingDestination() {
+<span class="nc" id="L180">        return routingDestination;</span>
+    }
+
+    public void setRoutingDestination(String routingDestination) {
+<span class="nc" id="L184">        this.routingDestination = routingDestination;</span>
+<span class="nc" id="L185">    }</span>
+
+    public String getRoutingExpression() {
+<span class="nc" id="L188">        return routingExpression;</span>
+    }
+
+    public void setRoutingExpression(String routingExpression) {
+<span class="nc" id="L192">        this.routingExpression = routingExpression;</span>
+<span class="nc" id="L193">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.5.201910111838</span></div></body></html>

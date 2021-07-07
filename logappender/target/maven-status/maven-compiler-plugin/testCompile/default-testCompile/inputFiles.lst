@@ -1,0 +1,6 @@
+/Users/yangweixing/Desktop/github_open/rocketmq-all-4.8.0-source-release/logappender/src/test/java/org/apache/rocketmq/logappender/Log4jXmlTest.java
+/Users/yangweixing/Desktop/github_open/rocketmq-all-4.8.0-source-release/logappender/src/test/java/org/apache/rocketmq/logappender/log4j2Test.java
+/Users/yangweixing/Desktop/github_open/rocketmq-all-4.8.0-source-release/logappender/src/test/java/org/apache/rocketmq/logappender/LogbackTest.java
+/Users/yangweixing/Desktop/github_open/rocketmq-all-4.8.0-source-release/logappender/src/test/java/org/apache/rocketmq/logappender/Log4jTest.java
+/Users/yangweixing/Desktop/github_open/rocketmq-all-4.8.0-source-release/logappender/src/test/java/org/apache/rocketmq/logappender/Log4jPropertiesTest.java
+/Users/yangweixing/Desktop/github_open/rocketmq-all-4.8.0-source-release/logappender/src/test/java/org/apache/rocketmq/logappender/AbstractTestCase.java

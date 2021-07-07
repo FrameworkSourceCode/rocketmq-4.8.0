@@ -1,0 +1,282 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>BrokerStartup.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">rocketmq-broker 4.8.0</a> &gt; <a href="index.source.html" class="el_package">org.apache.rocketmq.broker</a> &gt; <span class="el_source">BrokerStartup.java</span></div><h1>BrokerStartup.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.rocketmq.broker;
+
+import ch.qos.logback.classic.LoggerContext;
+import ch.qos.logback.classic.joran.JoranConfigurator;
+import org.apache.commons.cli.CommandLine;
+import org.apache.commons.cli.Option;
+import org.apache.commons.cli.Options;
+import org.apache.commons.cli.PosixParser;
+import org.apache.rocketmq.common.BrokerConfig;
+import org.apache.rocketmq.common.MQVersion;
+import org.apache.rocketmq.common.MixAll;
+import org.apache.rocketmq.common.constant.LoggerName;
+import org.apache.rocketmq.logging.InternalLogger;
+import org.apache.rocketmq.logging.InternalLoggerFactory;
+import org.apache.rocketmq.remoting.common.RemotingUtil;
+import org.apache.rocketmq.remoting.common.TlsMode;
+import org.apache.rocketmq.remoting.netty.NettyClientConfig;
+import org.apache.rocketmq.remoting.netty.NettyServerConfig;
+import org.apache.rocketmq.remoting.netty.NettySystemConfig;
+import org.apache.rocketmq.remoting.netty.TlsSystemConfig;
+import org.apache.rocketmq.remoting.protocol.RemotingCommand;
+import org.apache.rocketmq.srvutil.ServerUtil;
+import org.apache.rocketmq.store.config.BrokerRole;
+import org.apache.rocketmq.store.config.MessageStoreConfig;
+import org.slf4j.LoggerFactory;
+
+import java.io.BufferedInputStream;
+import java.io.FileInputStream;
+import java.io.InputStream;
+import java.util.Properties;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import static org.apache.rocketmq.remoting.netty.TlsSystemConfig.TLS_ENABLE;
+
+<span class="nc" id="L51">public class BrokerStartup {</span>
+<span class="fc" id="L52">    public static Properties properties = null;</span>
+<span class="fc" id="L53">    public static CommandLine commandLine = null;</span>
+<span class="fc" id="L54">    public static String configFile = null;</span>
+    public static InternalLogger log;
+
+    public static void main(String[] args) {
+<span class="nc" id="L58">        start(createBrokerController(args));</span>
+<span class="nc" id="L59">    }</span>
+
+    public static BrokerController start(BrokerController controller) {
+        try {
+
+<span class="nc" id="L64">            controller.start();</span>
+
+<span class="nc" id="L66">            String tip = &quot;The broker[&quot; + controller.getBrokerConfig().getBrokerName() + &quot;, &quot;</span>
+<span class="nc" id="L67">                + controller.getBrokerAddr() + &quot;] boot success. serializeType=&quot; + RemotingCommand.getSerializeTypeConfigInThisServer();</span>
+
+<span class="nc bnc" id="L69" title="All 2 branches missed.">            if (null != controller.getBrokerConfig().getNamesrvAddr()) {</span>
+<span class="nc" id="L70">                tip += &quot; and name server is &quot; + controller.getBrokerConfig().getNamesrvAddr();</span>
+            }
+
+<span class="nc" id="L73">            log.info(tip);</span>
+<span class="nc" id="L74">            System.out.printf(&quot;%s%n&quot;, tip);</span>
+<span class="nc" id="L75">            return controller;</span>
+<span class="nc" id="L76">        } catch (Throwable e) {</span>
+<span class="nc" id="L77">            e.printStackTrace();</span>
+<span class="nc" id="L78">            System.exit(-1);</span>
+        }
+
+<span class="nc" id="L81">        return null;</span>
+    }
+
+    public static void shutdown(final BrokerController controller) {
+<span class="nc bnc" id="L85" title="All 2 branches missed.">        if (null != controller) {</span>
+<span class="nc" id="L86">            controller.shutdown();</span>
+        }
+<span class="nc" id="L88">    }</span>
+
+    public static BrokerController createBrokerController(String[] args) {
+<span class="nc" id="L91">        System.setProperty(RemotingCommand.REMOTING_VERSION_KEY, Integer.toString(MQVersion.CURRENT_VERSION));</span>
+
+<span class="nc bnc" id="L93" title="All 2 branches missed.">        if (null == System.getProperty(NettySystemConfig.COM_ROCKETMQ_REMOTING_SOCKET_SNDBUF_SIZE)) {</span>
+<span class="nc" id="L94">            NettySystemConfig.socketSndbufSize = 131072;</span>
+        }
+
+<span class="nc bnc" id="L97" title="All 2 branches missed.">        if (null == System.getProperty(NettySystemConfig.COM_ROCKETMQ_REMOTING_SOCKET_RCVBUF_SIZE)) {</span>
+<span class="nc" id="L98">            NettySystemConfig.socketRcvbufSize = 131072;</span>
+        }
+
+        try {
+            //PackageConflictDetect.detectFastjson();
+<span class="nc" id="L103">            Options options = ServerUtil.buildCommandlineOptions(new Options());</span>
+<span class="nc" id="L104">            commandLine = ServerUtil.parseCmdLine(&quot;mqbroker&quot;, args, buildCommandlineOptions(options),</span>
+                new PosixParser());
+<span class="nc bnc" id="L106" title="All 2 branches missed.">            if (null == commandLine) {</span>
+<span class="nc" id="L107">                System.exit(-1);</span>
+            }
+
+<span class="nc" id="L110">            final BrokerConfig brokerConfig = new BrokerConfig();</span>
+<span class="nc" id="L111">            final NettyServerConfig nettyServerConfig = new NettyServerConfig();</span>
+<span class="nc" id="L112">            final NettyClientConfig nettyClientConfig = new NettyClientConfig();</span>
+
+<span class="nc bnc" id="L114" title="All 2 branches missed.">            nettyClientConfig.setUseTLS(Boolean.parseBoolean(System.getProperty(TLS_ENABLE,</span>
+<span class="nc" id="L115">                String.valueOf(TlsSystemConfig.tlsMode == TlsMode.ENFORCING))));</span>
+<span class="nc" id="L116">            nettyServerConfig.setListenPort(10911);</span>
+<span class="nc" id="L117">            final MessageStoreConfig messageStoreConfig = new MessageStoreConfig();</span>
+
+<span class="nc bnc" id="L119" title="All 2 branches missed.">            if (BrokerRole.SLAVE == messageStoreConfig.getBrokerRole()) {</span>
+<span class="nc" id="L120">                int ratio = messageStoreConfig.getAccessMessageInMemoryMaxRatio() - 10;</span>
+<span class="nc" id="L121">                messageStoreConfig.setAccessMessageInMemoryMaxRatio(ratio);</span>
+            }
+
+<span class="nc bnc" id="L124" title="All 2 branches missed.">            if (commandLine.hasOption('c')) {</span>
+<span class="nc" id="L125">                String file = commandLine.getOptionValue('c');</span>
+<span class="nc bnc" id="L126" title="All 2 branches missed.">                if (file != null) {</span>
+<span class="nc" id="L127">                    configFile = file;</span>
+<span class="nc" id="L128">                    InputStream in = new BufferedInputStream(new FileInputStream(file));</span>
+<span class="nc" id="L129">                    properties = new Properties();</span>
+<span class="nc" id="L130">                    properties.load(in);</span>
+
+<span class="nc" id="L132">                    properties2SystemEnv(properties);</span>
+<span class="nc" id="L133">                    MixAll.properties2Object(properties, brokerConfig);</span>
+<span class="nc" id="L134">                    MixAll.properties2Object(properties, nettyServerConfig);</span>
+<span class="nc" id="L135">                    MixAll.properties2Object(properties, nettyClientConfig);</span>
+<span class="nc" id="L136">                    MixAll.properties2Object(properties, messageStoreConfig);</span>
+
+<span class="nc" id="L138">                    BrokerPathConfigHelper.setBrokerConfigPath(file);</span>
+<span class="nc" id="L139">                    in.close();</span>
+                }
+            }
+
+<span class="nc" id="L143">            MixAll.properties2Object(ServerUtil.commandLine2Properties(commandLine), brokerConfig);</span>
+
+<span class="nc bnc" id="L145" title="All 2 branches missed.">            if (null == brokerConfig.getRocketmqHome()) {</span>
+<span class="nc" id="L146">                System.out.printf(&quot;Please set the %s variable in your environment to match the location of the RocketMQ installation&quot;, MixAll.ROCKETMQ_HOME_ENV);</span>
+<span class="nc" id="L147">                System.exit(-2);</span>
+            }
+
+<span class="nc" id="L150">            String namesrvAddr = brokerConfig.getNamesrvAddr();</span>
+<span class="nc bnc" id="L151" title="All 2 branches missed.">            if (null != namesrvAddr) {</span>
+                try {
+<span class="nc" id="L153">                    String[] addrArray = namesrvAddr.split(&quot;;&quot;);</span>
+<span class="nc bnc" id="L154" title="All 2 branches missed.">                    for (String addr : addrArray) {</span>
+<span class="nc" id="L155">                        RemotingUtil.string2SocketAddress(addr);</span>
+                    }
+<span class="nc" id="L157">                } catch (Exception e) {</span>
+<span class="nc" id="L158">                    System.out.printf(</span>
+                        &quot;The Name Server Address[%s] illegal, please set it as follows, \&quot;127.0.0.1:9876;192.168.0.1:9876\&quot;%n&quot;,
+                        namesrvAddr);
+<span class="nc" id="L161">                    System.exit(-3);</span>
+<span class="nc" id="L162">                }</span>
+            }
+
+<span class="nc bnc" id="L165" title="All 3 branches missed.">            switch (messageStoreConfig.getBrokerRole()) {</span>
+                case ASYNC_MASTER:
+                case SYNC_MASTER:
+<span class="nc" id="L168">                    brokerConfig.setBrokerId(MixAll.MASTER_ID);</span>
+<span class="nc" id="L169">                    break;</span>
+                case SLAVE:
+<span class="nc bnc" id="L171" title="All 2 branches missed.">                    if (brokerConfig.getBrokerId() &lt;= 0) {</span>
+<span class="nc" id="L172">                        System.out.printf(&quot;Slave's brokerId must be &gt; 0&quot;);</span>
+<span class="nc" id="L173">                        System.exit(-3);</span>
+                    }
+
+                    break;
+                default:
+                    break;
+            }
+
+<span class="nc bnc" id="L181" title="All 2 branches missed.">            if (messageStoreConfig.isEnableDLegerCommitLog()) {</span>
+<span class="nc" id="L182">                brokerConfig.setBrokerId(-1);</span>
+            }
+
+<span class="nc" id="L185">            messageStoreConfig.setHaListenPort(nettyServerConfig.getListenPort() + 1);</span>
+<span class="nc" id="L186">            LoggerContext lc = (LoggerContext) LoggerFactory.getILoggerFactory();</span>
+<span class="nc" id="L187">            JoranConfigurator configurator = new JoranConfigurator();</span>
+<span class="nc" id="L188">            configurator.setContext(lc);</span>
+<span class="nc" id="L189">            lc.reset();</span>
+<span class="nc" id="L190">            configurator.doConfigure(brokerConfig.getRocketmqHome() + &quot;/conf/logback_broker.xml&quot;);</span>
+
+<span class="nc bnc" id="L192" title="All 2 branches missed.">            if (commandLine.hasOption('p')) {</span>
+<span class="nc" id="L193">                InternalLogger console = InternalLoggerFactory.getLogger(LoggerName.BROKER_CONSOLE_NAME);</span>
+<span class="nc" id="L194">                MixAll.printObjectProperties(console, brokerConfig);</span>
+<span class="nc" id="L195">                MixAll.printObjectProperties(console, nettyServerConfig);</span>
+<span class="nc" id="L196">                MixAll.printObjectProperties(console, nettyClientConfig);</span>
+<span class="nc" id="L197">                MixAll.printObjectProperties(console, messageStoreConfig);</span>
+<span class="nc" id="L198">                System.exit(0);</span>
+<span class="nc bnc" id="L199" title="All 2 branches missed.">            } else if (commandLine.hasOption('m')) {</span>
+<span class="nc" id="L200">                InternalLogger console = InternalLoggerFactory.getLogger(LoggerName.BROKER_CONSOLE_NAME);</span>
+<span class="nc" id="L201">                MixAll.printObjectProperties(console, brokerConfig, true);</span>
+<span class="nc" id="L202">                MixAll.printObjectProperties(console, nettyServerConfig, true);</span>
+<span class="nc" id="L203">                MixAll.printObjectProperties(console, nettyClientConfig, true);</span>
+<span class="nc" id="L204">                MixAll.printObjectProperties(console, messageStoreConfig, true);</span>
+<span class="nc" id="L205">                System.exit(0);</span>
+            }
+
+<span class="nc" id="L208">            log = InternalLoggerFactory.getLogger(LoggerName.BROKER_LOGGER_NAME);</span>
+<span class="nc" id="L209">            MixAll.printObjectProperties(log, brokerConfig);</span>
+<span class="nc" id="L210">            MixAll.printObjectProperties(log, nettyServerConfig);</span>
+<span class="nc" id="L211">            MixAll.printObjectProperties(log, nettyClientConfig);</span>
+<span class="nc" id="L212">            MixAll.printObjectProperties(log, messageStoreConfig);</span>
+
+<span class="nc" id="L214">            final BrokerController controller = new BrokerController(</span>
+                brokerConfig,
+                nettyServerConfig,
+                nettyClientConfig,
+                messageStoreConfig);
+            // remember all configs to prevent discard
+<span class="nc" id="L220">            controller.getConfiguration().registerConfig(properties);</span>
+
+<span class="nc" id="L222">            boolean initResult = controller.initialize();</span>
+<span class="nc bnc" id="L223" title="All 2 branches missed.">            if (!initResult) {</span>
+<span class="nc" id="L224">                controller.shutdown();</span>
+<span class="nc" id="L225">                System.exit(-3);</span>
+            }
+
+<span class="nc" id="L228">            Runtime.getRuntime().addShutdownHook(new Thread(new Runnable() {</span>
+<span class="nc" id="L229">                private volatile boolean hasShutdown = false;</span>
+<span class="nc" id="L230">                private AtomicInteger shutdownTimes = new AtomicInteger(0);</span>
+
+                @Override
+                public void run() {
+<span class="nc" id="L234">                    synchronized (this) {</span>
+<span class="nc" id="L235">                        log.info(&quot;Shutdown hook was invoked, {}&quot;, this.shutdownTimes.incrementAndGet());</span>
+<span class="nc bnc" id="L236" title="All 2 branches missed.">                        if (!this.hasShutdown) {</span>
+<span class="nc" id="L237">                            this.hasShutdown = true;</span>
+<span class="nc" id="L238">                            long beginTime = System.currentTimeMillis();</span>
+<span class="nc" id="L239">                            controller.shutdown();</span>
+<span class="nc" id="L240">                            long consumingTimeTotal = System.currentTimeMillis() - beginTime;</span>
+<span class="nc" id="L241">                            log.info(&quot;Shutdown hook over, consuming total time(ms): {}&quot;, consumingTimeTotal);</span>
+                        }
+<span class="nc" id="L243">                    }</span>
+<span class="nc" id="L244">                }</span>
+            }, &quot;ShutdownHook&quot;));
+
+<span class="nc" id="L247">            return controller;</span>
+<span class="nc" id="L248">        } catch (Throwable e) {</span>
+<span class="nc" id="L249">            e.printStackTrace();</span>
+<span class="nc" id="L250">            System.exit(-1);</span>
+        }
+
+<span class="nc" id="L253">        return null;</span>
+    }
+
+    private static void properties2SystemEnv(Properties properties) {
+<span class="pc bpc" id="L257" title="1 of 2 branches missed.">        if (properties == null) {</span>
+<span class="nc" id="L258">            return;</span>
+        }
+<span class="fc" id="L260">        String rmqAddressServerDomain = properties.getProperty(&quot;rmqAddressServerDomain&quot;, MixAll.WS_DOMAIN_NAME);</span>
+<span class="fc" id="L261">        String rmqAddressServerSubGroup = properties.getProperty(&quot;rmqAddressServerSubGroup&quot;, MixAll.WS_DOMAIN_SUBGROUP);</span>
+<span class="fc" id="L262">        System.setProperty(&quot;rocketmq.namesrv.domain&quot;, rmqAddressServerDomain);</span>
+<span class="fc" id="L263">        System.setProperty(&quot;rocketmq.namesrv.domain.subgroup&quot;, rmqAddressServerSubGroup);</span>
+<span class="fc" id="L264">    }</span>
+
+    private static Options buildCommandlineOptions(final Options options) {
+<span class="nc" id="L267">        Option opt = new Option(&quot;c&quot;, &quot;configFile&quot;, true, &quot;Broker config properties file&quot;);</span>
+<span class="nc" id="L268">        opt.setRequired(false);</span>
+<span class="nc" id="L269">        options.addOption(opt);</span>
+
+<span class="nc" id="L271">        opt = new Option(&quot;p&quot;, &quot;printConfigItem&quot;, false, &quot;Print all config item&quot;);</span>
+<span class="nc" id="L272">        opt.setRequired(false);</span>
+<span class="nc" id="L273">        options.addOption(opt);</span>
+
+<span class="nc" id="L275">        opt = new Option(&quot;m&quot;, &quot;printImportantConfig&quot;, false, &quot;Print important config item&quot;);</span>
+<span class="nc" id="L276">        opt.setRequired(false);</span>
+<span class="nc" id="L277">        options.addOption(opt);</span>
+
+<span class="nc" id="L279">        return options;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.5.201910111838</span></div></body></html>

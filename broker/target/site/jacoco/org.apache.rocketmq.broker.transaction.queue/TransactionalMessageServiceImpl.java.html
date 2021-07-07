@@ -1,0 +1,498 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>TransactionalMessageServiceImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">rocketmq-broker 4.8.0</a> &gt; <a href="index.source.html" class="el_package">org.apache.rocketmq.broker.transaction.queue</a> &gt; <span class="el_source">TransactionalMessageServiceImpl.java</span></div><h1>TransactionalMessageServiceImpl.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.rocketmq.broker.transaction.queue;
+
+import org.apache.rocketmq.broker.transaction.AbstractTransactionalMessageCheckListener;
+import org.apache.rocketmq.broker.transaction.OperationResult;
+import org.apache.rocketmq.broker.transaction.TransactionalMessageService;
+import org.apache.rocketmq.client.consumer.PullResult;
+import org.apache.rocketmq.client.consumer.PullStatus;
+import org.apache.rocketmq.common.constant.LoggerName;
+import org.apache.rocketmq.common.message.MessageConst;
+import org.apache.rocketmq.common.message.MessageExt;
+import org.apache.rocketmq.common.message.MessageQueue;
+import org.apache.rocketmq.common.protocol.ResponseCode;
+import org.apache.rocketmq.common.protocol.header.EndTransactionRequestHeader;
+import org.apache.rocketmq.common.topic.TopicValidator;
+import org.apache.rocketmq.logging.InternalLogger;
+import org.apache.rocketmq.logging.InternalLoggerFactory;
+import org.apache.rocketmq.store.MessageExtBrokerInner;
+import org.apache.rocketmq.store.PutMessageResult;
+import org.apache.rocketmq.store.PutMessageStatus;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+
+public class TransactionalMessageServiceImpl implements TransactionalMessageService {
+<span class="fc" id="L47">    private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.TRANSACTION_LOGGER_NAME);</span>
+
+    private TransactionalMessageBridge transactionalMessageBridge;
+
+    private static final int PULL_MSG_RETRY_NUMBER = 1;
+
+    private static final int MAX_PROCESS_TIME_LIMIT = 60000;
+
+    private static final int MAX_RETRY_COUNT_WHEN_HALF_NULL = 1;
+
+<span class="fc" id="L57">    public TransactionalMessageServiceImpl(TransactionalMessageBridge transactionBridge) {</span>
+<span class="fc" id="L58">        this.transactionalMessageBridge = transactionBridge;</span>
+<span class="fc" id="L59">    }</span>
+
+<span class="fc" id="L61">    private ConcurrentHashMap&lt;MessageQueue, MessageQueue&gt; opQueueMap = new ConcurrentHashMap&lt;&gt;();</span>
+
+    @Override
+    public CompletableFuture&lt;PutMessageResult&gt; asyncPrepareMessage(MessageExtBrokerInner messageInner) {
+<span class="nc" id="L65">        return transactionalMessageBridge.asyncPutHalfMessage(messageInner);</span>
+    }
+
+    @Override
+    public PutMessageResult prepareMessage(MessageExtBrokerInner messageInner) {
+<span class="fc" id="L70">        return transactionalMessageBridge.putHalfMessage(messageInner);</span>
+    }
+
+    private boolean needDiscard(MessageExt msgExt, int transactionCheckMax) {
+<span class="fc" id="L74">        String checkTimes = msgExt.getProperty(MessageConst.PROPERTY_TRANSACTION_CHECK_TIMES);</span>
+<span class="fc" id="L75">        int checkTime = 1;</span>
+<span class="fc bfc" id="L76" title="All 2 branches covered.">        if (null != checkTimes) {</span>
+<span class="fc" id="L77">            checkTime = getInt(checkTimes);</span>
+<span class="pc bpc" id="L78" title="1 of 2 branches missed.">            if (checkTime &gt;= transactionCheckMax) {</span>
+<span class="fc" id="L79">                return true;</span>
+            } else {
+<span class="nc" id="L81">                checkTime++;</span>
+            }
+        }
+<span class="fc" id="L84">        msgExt.putUserProperty(MessageConst.PROPERTY_TRANSACTION_CHECK_TIMES, String.valueOf(checkTime));</span>
+<span class="fc" id="L85">        return false;</span>
+    }
+
+    private boolean needSkip(MessageExt msgExt) {
+<span class="fc" id="L89">        long valueOfCurrentMinusBorn = System.currentTimeMillis() - msgExt.getBornTimestamp();</span>
+<span class="fc" id="L90">        if (valueOfCurrentMinusBorn</span>
+<span class="pc bpc" id="L91" title="1 of 2 branches missed.">            &gt; transactionalMessageBridge.getBrokerController().getMessageStoreConfig().getFileReservedTime()</span>
+            * 3600L * 1000) {
+<span class="nc" id="L93">            log.info(&quot;Half message exceed file reserved time ,so skip it.messageId {},bornTime {}&quot;,</span>
+<span class="nc" id="L94">                msgExt.getMsgId(), msgExt.getBornTimestamp());</span>
+<span class="nc" id="L95">            return true;</span>
+        }
+<span class="fc" id="L97">        return false;</span>
+    }
+
+    private boolean putBackHalfMsgQueue(MessageExt msgExt, long offset) {
+<span class="fc" id="L101">        PutMessageResult putMessageResult = putBackToHalfQueueReturnResult(msgExt);</span>
+<span class="pc bpc" id="L102" title="1 of 2 branches missed.">        if (putMessageResult != null</span>
+<span class="pc bpc" id="L103" title="1 of 2 branches missed.">            &amp;&amp; putMessageResult.getPutMessageStatus() == PutMessageStatus.PUT_OK) {</span>
+<span class="fc" id="L104">            msgExt.setQueueOffset(</span>
+<span class="fc" id="L105">                putMessageResult.getAppendMessageResult().getLogicsOffset());</span>
+<span class="fc" id="L106">            msgExt.setCommitLogOffset(</span>
+<span class="fc" id="L107">                putMessageResult.getAppendMessageResult().getWroteOffset());</span>
+<span class="fc" id="L108">            msgExt.setMsgId(putMessageResult.getAppendMessageResult().getMsgId());</span>
+<span class="fc" id="L109">            log.debug(</span>
+                &quot;Send check message, the offset={} restored in queueOffset={} &quot;
+                    + &quot;commitLogOffset={} &quot;
+                    + &quot;newMsgId={} realMsgId={} topic={}&quot;,
+<span class="fc" id="L113">                offset, msgExt.getQueueOffset(), msgExt.getCommitLogOffset(), msgExt.getMsgId(),</span>
+<span class="fc" id="L114">                msgExt.getUserProperty(MessageConst.PROPERTY_UNIQ_CLIENT_MESSAGE_ID_KEYIDX),</span>
+<span class="fc" id="L115">                msgExt.getTopic());</span>
+<span class="fc" id="L116">            return true;</span>
+        } else {
+<span class="nc" id="L118">            log.error(</span>
+                &quot;PutBackToHalfQueueReturnResult write failed, topic: {}, queueId: {}, &quot;
+                    + &quot;msgId: {}&quot;,
+<span class="nc" id="L121">                msgExt.getTopic(), msgExt.getQueueId(), msgExt.getMsgId());</span>
+<span class="nc" id="L122">            return false;</span>
+        }
+    }
+
+    @Override
+    public void check(long transactionTimeout, int transactionCheckMax,
+        AbstractTransactionalMessageCheckListener listener) {
+        try {
+<span class="fc" id="L130">            String topic = TopicValidator.RMQ_SYS_TRANS_HALF_TOPIC;</span>
+<span class="fc" id="L131">            Set&lt;MessageQueue&gt; msgQueues = transactionalMessageBridge.fetchMessageQueues(topic);</span>
+<span class="pc bpc" id="L132" title="2 of 4 branches missed.">            if (msgQueues == null || msgQueues.size() == 0) {</span>
+<span class="nc" id="L133">                log.warn(&quot;The queue of topic is empty :&quot; + topic);</span>
+<span class="nc" id="L134">                return;</span>
+            }
+<span class="fc" id="L136">            log.debug(&quot;Check topic={}, queues={}&quot;, topic, msgQueues);</span>
+<span class="fc bfc" id="L137" title="All 2 branches covered.">            for (MessageQueue messageQueue : msgQueues) {</span>
+<span class="fc" id="L138">                long startTime = System.currentTimeMillis();</span>
+<span class="fc" id="L139">                MessageQueue opQueue = getOpQueue(messageQueue);</span>
+<span class="fc" id="L140">                long halfOffset = transactionalMessageBridge.fetchConsumeOffset(messageQueue);</span>
+<span class="fc" id="L141">                long opOffset = transactionalMessageBridge.fetchConsumeOffset(opQueue);</span>
+<span class="fc" id="L142">                log.info(&quot;Before check, the queue={} msgOffset={} opOffset={}&quot;, messageQueue, halfOffset, opOffset);</span>
+<span class="pc bpc" id="L143" title="2 of 4 branches missed.">                if (halfOffset &lt; 0 || opOffset &lt; 0) {</span>
+<span class="nc" id="L144">                    log.error(&quot;MessageQueue: {} illegal offset read: {}, op offset: {},skip this queue&quot;, messageQueue,</span>
+<span class="nc" id="L145">                        halfOffset, opOffset);</span>
+<span class="nc" id="L146">                    continue;</span>
+                }
+
+<span class="fc" id="L149">                List&lt;Long&gt; doneOpOffset = new ArrayList&lt;&gt;();</span>
+<span class="fc" id="L150">                HashMap&lt;Long, Long&gt; removeMap = new HashMap&lt;&gt;();</span>
+<span class="fc" id="L151">                PullResult pullResult = fillOpRemoveMap(removeMap, opQueue, opOffset, halfOffset, doneOpOffset);</span>
+<span class="pc bpc" id="L152" title="1 of 2 branches missed.">                if (null == pullResult) {</span>
+<span class="nc" id="L153">                    log.error(&quot;The queue={} check msgOffset={} with opOffset={} failed, pullResult is null&quot;,</span>
+<span class="nc" id="L154">                        messageQueue, halfOffset, opOffset);</span>
+<span class="nc" id="L155">                    continue;</span>
+                }
+                // single thread
+<span class="fc" id="L158">                int getMessageNullCount = 1;</span>
+<span class="fc" id="L159">                long newOffset = halfOffset;</span>
+<span class="fc" id="L160">                long i = halfOffset;</span>
+                while (true) {
+<span class="pc bpc" id="L162" title="1 of 2 branches missed.">                    if (System.currentTimeMillis() - startTime &gt; MAX_PROCESS_TIME_LIMIT) {</span>
+<span class="nc" id="L163">                        log.info(&quot;Queue={} process time reach max={}&quot;, messageQueue, MAX_PROCESS_TIME_LIMIT);</span>
+<span class="nc" id="L164">                        break;</span>
+                    }
+<span class="pc bpc" id="L166" title="1 of 2 branches missed.">                    if (removeMap.containsKey(i)) {</span>
+<span class="nc" id="L167">                        log.info(&quot;Half offset {} has been committed/rolled back&quot;, i);</span>
+<span class="nc" id="L168">                        Long removedOpOffset = removeMap.remove(i);</span>
+<span class="nc" id="L169">                        doneOpOffset.add(removedOpOffset);</span>
+<span class="nc" id="L170">                    } else {</span>
+<span class="fc" id="L171">                        GetResult getResult = getHalfMsg(messageQueue, i);</span>
+<span class="fc" id="L172">                        MessageExt msgExt = getResult.getMsg();</span>
+<span class="fc bfc" id="L173" title="All 2 branches covered.">                        if (msgExt == null) {</span>
+<span class="pc bpc" id="L174" title="1 of 2 branches missed.">                            if (getMessageNullCount++ &gt; MAX_RETRY_COUNT_WHEN_HALF_NULL) {</span>
+<span class="nc" id="L175">                                break;</span>
+                            }
+<span class="pc bpc" id="L177" title="1 of 2 branches missed.">                            if (getResult.getPullResult().getPullStatus() == PullStatus.NO_NEW_MSG) {</span>
+<span class="fc" id="L178">                                log.debug(&quot;No new msg, the miss offset={} in={}, continue check={}, pull result={}&quot;, i,</span>
+<span class="fc" id="L179">                                    messageQueue, getMessageNullCount, getResult.getPullResult());</span>
+<span class="fc" id="L180">                                break;</span>
+                            } else {
+<span class="nc" id="L182">                                log.info(&quot;Illegal offset, the miss offset={} in={}, continue check={}, pull result={}&quot;,</span>
+<span class="nc" id="L183">                                    i, messageQueue, getMessageNullCount, getResult.getPullResult());</span>
+<span class="nc" id="L184">                                i = getResult.getPullResult().getNextBeginOffset();</span>
+<span class="nc" id="L185">                                newOffset = i;</span>
+<span class="nc" id="L186">                                continue;</span>
+                            }
+                        }
+
+<span class="pc bpc" id="L190" title="1 of 4 branches missed.">                        if (needDiscard(msgExt, transactionCheckMax) || needSkip(msgExt)) {</span>
+<span class="fc" id="L191">                            listener.resolveDiscardMsg(msgExt);</span>
+<span class="fc" id="L192">                            newOffset = i + 1;</span>
+<span class="fc" id="L193">                            i++;</span>
+<span class="fc" id="L194">                            continue;</span>
+                        }
+<span class="pc bpc" id="L196" title="1 of 2 branches missed.">                        if (msgExt.getStoreTimestamp() &gt;= startTime) {</span>
+<span class="nc" id="L197">                            log.debug(&quot;Fresh stored. the miss offset={}, check it later, store={}&quot;, i,</span>
+<span class="nc" id="L198">                                new Date(msgExt.getStoreTimestamp()));</span>
+<span class="nc" id="L199">                            break;</span>
+                        }
+
+<span class="fc" id="L202">                        long valueOfCurrentMinusBorn = System.currentTimeMillis() - msgExt.getBornTimestamp();</span>
+<span class="fc" id="L203">                        long checkImmunityTime = transactionTimeout;</span>
+<span class="fc" id="L204">                        String checkImmunityTimeStr = msgExt.getUserProperty(MessageConst.PROPERTY_CHECK_IMMUNITY_TIME_IN_SECONDS);</span>
+<span class="pc bpc" id="L205" title="1 of 2 branches missed.">                        if (null != checkImmunityTimeStr) {</span>
+<span class="nc" id="L206">                            checkImmunityTime = getImmunityTime(checkImmunityTimeStr, transactionTimeout);</span>
+<span class="nc bnc" id="L207" title="All 2 branches missed.">                            if (valueOfCurrentMinusBorn &lt; checkImmunityTime) {</span>
+<span class="nc bnc" id="L208" title="All 2 branches missed.">                                if (checkPrepareQueueOffset(removeMap, doneOpOffset, msgExt)) {</span>
+<span class="nc" id="L209">                                    newOffset = i + 1;</span>
+<span class="nc" id="L210">                                    i++;</span>
+<span class="nc" id="L211">                                    continue;</span>
+                                }
+                            }
+                        } else {
+<span class="pc bpc" id="L215" title="2 of 4 branches missed.">                            if ((0 &lt;= valueOfCurrentMinusBorn) &amp;&amp; (valueOfCurrentMinusBorn &lt; checkImmunityTime)) {</span>
+<span class="nc" id="L216">                                log.debug(&quot;New arrived, the miss offset={}, check it later checkImmunity={}, born={}&quot;, i,</span>
+<span class="nc" id="L217">                                    checkImmunityTime, new Date(msgExt.getBornTimestamp()));</span>
+<span class="nc" id="L218">                                break;</span>
+                            }
+                        }
+<span class="fc" id="L221">                        List&lt;MessageExt&gt; opMsg = pullResult.getMsgFoundList();</span>
+<span class="pc bpc" id="L222" title="4 of 6 branches missed.">                        boolean isNeedCheck = (opMsg == null &amp;&amp; valueOfCurrentMinusBorn &gt; checkImmunityTime)</span>
+<span class="pc bnc" id="L223" title="All 4 branches missed.">                            || (opMsg != null &amp;&amp; (opMsg.get(opMsg.size() - 1).getBornTimestamp() - startTime &gt; transactionTimeout))</span>
+                            || (valueOfCurrentMinusBorn &lt;= -1);
+
+<span class="pc bpc" id="L226" title="1 of 2 branches missed.">                        if (isNeedCheck) {</span>
+<span class="pc bpc" id="L227" title="1 of 2 branches missed.">                            if (!putBackHalfMsgQueue(msgExt, i)) {</span>
+<span class="nc" id="L228">                                continue;</span>
+                            }
+<span class="fc" id="L230">                            listener.resolveHalfMsg(msgExt);</span>
+                        } else {
+<span class="nc" id="L232">                            pullResult = fillOpRemoveMap(removeMap, opQueue, pullResult.getNextBeginOffset(), halfOffset, doneOpOffset);</span>
+<span class="nc" id="L233">                            log.debug(&quot;The miss offset:{} in messageQueue:{} need to get more opMsg, result is:{}&quot;, i,</span>
+                                messageQueue, pullResult);
+<span class="nc" id="L235">                            continue;</span>
+                        }
+                    }
+<span class="fc" id="L238">                    newOffset = i + 1;</span>
+<span class="fc" id="L239">                    i++;</span>
+                }
+<span class="pc bpc" id="L241" title="1 of 2 branches missed.">                if (newOffset != halfOffset) {</span>
+<span class="fc" id="L242">                    transactionalMessageBridge.updateConsumeOffset(messageQueue, newOffset);</span>
+                }
+<span class="fc" id="L244">                long newOpOffset = calculateOpOffset(doneOpOffset, opOffset);</span>
+<span class="pc bpc" id="L245" title="1 of 2 branches missed.">                if (newOpOffset != opOffset) {</span>
+<span class="nc" id="L246">                    transactionalMessageBridge.updateConsumeOffset(opQueue, newOpOffset);</span>
+                }
+<span class="fc" id="L248">            }</span>
+<span class="nc" id="L249">        } catch (Throwable e) {</span>
+<span class="nc" id="L250">            log.error(&quot;Check error&quot;, e);</span>
+<span class="fc" id="L251">        }</span>
+
+<span class="fc" id="L253">    }</span>
+
+    private long getImmunityTime(String checkImmunityTimeStr, long transactionTimeout) {
+        long checkImmunityTime;
+
+<span class="nc" id="L258">        checkImmunityTime = getLong(checkImmunityTimeStr);</span>
+<span class="nc bnc" id="L259" title="All 2 branches missed.">        if (-1 == checkImmunityTime) {</span>
+<span class="nc" id="L260">            checkImmunityTime = transactionTimeout;</span>
+        } else {
+<span class="nc" id="L262">            checkImmunityTime *= 1000;</span>
+        }
+<span class="nc" id="L264">        return checkImmunityTime;</span>
+    }
+
+    /**
+     * Read op message, parse op message, and fill removeMap
+     *
+     * @param removeMap Half message to be remove, key:halfOffset, value: opOffset.
+     * @param opQueue Op message queue.
+     * @param pullOffsetOfOp The begin offset of op message queue.
+     * @param miniOffset The current minimum offset of half message queue.
+     * @param doneOpOffset Stored op messages that have been processed.
+     * @return Op message result.
+     */
+    private PullResult fillOpRemoveMap(HashMap&lt;Long, Long&gt; removeMap,
+        MessageQueue opQueue, long pullOffsetOfOp, long miniOffset, List&lt;Long&gt; doneOpOffset) {
+<span class="fc" id="L279">        PullResult pullResult = pullOpMsg(opQueue, pullOffsetOfOp, 32);</span>
+<span class="pc bpc" id="L280" title="1 of 2 branches missed.">        if (null == pullResult) {</span>
+<span class="nc" id="L281">            return null;</span>
+        }
+<span class="pc bpc" id="L283" title="1 of 2 branches missed.">        if (pullResult.getPullStatus() == PullStatus.OFFSET_ILLEGAL</span>
+<span class="pc bpc" id="L284" title="1 of 2 branches missed.">            || pullResult.getPullStatus() == PullStatus.NO_MATCHED_MSG) {</span>
+<span class="nc" id="L285">            log.warn(&quot;The miss op offset={} in queue={} is illegal, pullResult={}&quot;, pullOffsetOfOp, opQueue,</span>
+                pullResult);
+<span class="nc" id="L287">            transactionalMessageBridge.updateConsumeOffset(opQueue, pullResult.getNextBeginOffset());</span>
+<span class="nc" id="L288">            return pullResult;</span>
+<span class="fc bfc" id="L289" title="All 2 branches covered.">        } else if (pullResult.getPullStatus() == PullStatus.NO_NEW_MSG) {</span>
+<span class="fc" id="L290">            log.warn(&quot;The miss op offset={} in queue={} is NO_NEW_MSG, pullResult={}&quot;, pullOffsetOfOp, opQueue,</span>
+                pullResult);
+<span class="fc" id="L292">            return pullResult;</span>
+        }
+<span class="fc" id="L294">        List&lt;MessageExt&gt; opMsg = pullResult.getMsgFoundList();</span>
+<span class="pc bpc" id="L295" title="1 of 2 branches missed.">        if (opMsg == null) {</span>
+<span class="nc" id="L296">            log.warn(&quot;The miss op offset={} in queue={} is empty, pullResult={}&quot;, pullOffsetOfOp, opQueue, pullResult);</span>
+<span class="nc" id="L297">            return pullResult;</span>
+        }
+<span class="fc bfc" id="L299" title="All 2 branches covered.">        for (MessageExt opMessageExt : opMsg) {</span>
+<span class="fc" id="L300">            Long queueOffset = getLong(new String(opMessageExt.getBody(), TransactionalMessageUtil.charset));</span>
+<span class="fc" id="L301">            log.debug(&quot;Topic: {} tags: {}, OpOffset: {}, HalfOffset: {}&quot;, opMessageExt.getTopic(),</span>
+<span class="fc" id="L302">                opMessageExt.getTags(), opMessageExt.getQueueOffset(), queueOffset);</span>
+<span class="pc bpc" id="L303" title="1 of 2 branches missed.">            if (TransactionalMessageUtil.REMOVETAG.equals(opMessageExt.getTags())) {</span>
+<span class="pc bpc" id="L304" title="1 of 2 branches missed.">                if (queueOffset &lt; miniOffset) {</span>
+<span class="nc" id="L305">                    doneOpOffset.add(opMessageExt.getQueueOffset());</span>
+                } else {
+<span class="fc" id="L307">                    removeMap.put(queueOffset, opMessageExt.getQueueOffset());</span>
+                }
+            } else {
+<span class="nc" id="L310">                log.error(&quot;Found a illegal tag in opMessageExt= {} &quot;, opMessageExt);</span>
+            }
+<span class="fc" id="L312">        }</span>
+<span class="fc" id="L313">        log.debug(&quot;Remove map: {}&quot;, removeMap);</span>
+<span class="fc" id="L314">        log.debug(&quot;Done op list: {}&quot;, doneOpOffset);</span>
+<span class="fc" id="L315">        return pullResult;</span>
+    }
+
+    /**
+     * If return true, skip this msg
+     *
+     * @param removeMap Op message map to determine whether a half message was responded by producer.
+     * @param doneOpOffset Op Message which has been checked.
+     * @param msgExt Half message
+     * @return Return true if put success, otherwise return false.
+     */
+    private boolean checkPrepareQueueOffset(HashMap&lt;Long, Long&gt; removeMap, List&lt;Long&gt; doneOpOffset,
+        MessageExt msgExt) {
+<span class="nc" id="L328">        String prepareQueueOffsetStr = msgExt.getUserProperty(MessageConst.PROPERTY_TRANSACTION_PREPARED_QUEUE_OFFSET);</span>
+<span class="nc bnc" id="L329" title="All 2 branches missed.">        if (null == prepareQueueOffsetStr) {</span>
+<span class="nc" id="L330">            return putImmunityMsgBackToHalfQueue(msgExt);</span>
+        } else {
+<span class="nc" id="L332">            long prepareQueueOffset = getLong(prepareQueueOffsetStr);</span>
+<span class="nc bnc" id="L333" title="All 2 branches missed.">            if (-1 == prepareQueueOffset) {</span>
+<span class="nc" id="L334">                return false;</span>
+            } else {
+<span class="nc bnc" id="L336" title="All 2 branches missed.">                if (removeMap.containsKey(prepareQueueOffset)) {</span>
+<span class="nc" id="L337">                    long tmpOpOffset = removeMap.remove(prepareQueueOffset);</span>
+<span class="nc" id="L338">                    doneOpOffset.add(tmpOpOffset);</span>
+<span class="nc" id="L339">                    return true;</span>
+                } else {
+<span class="nc" id="L341">                    return putImmunityMsgBackToHalfQueue(msgExt);</span>
+                }
+            }
+        }
+    }
+
+    /**
+     * Write messageExt to Half topic again
+     *
+     * @param messageExt Message will be write back to queue
+     * @return Put result can used to determine the specific results of storage.
+     */
+    private PutMessageResult putBackToHalfQueueReturnResult(MessageExt messageExt) {
+<span class="fc" id="L354">        PutMessageResult putMessageResult = null;</span>
+        try {
+<span class="fc" id="L356">            MessageExtBrokerInner msgInner = transactionalMessageBridge.renewHalfMessageInner(messageExt);</span>
+<span class="fc" id="L357">            putMessageResult = transactionalMessageBridge.putMessageReturnResult(msgInner);</span>
+<span class="nc" id="L358">        } catch (Exception e) {</span>
+<span class="nc" id="L359">            log.warn(&quot;PutBackToHalfQueueReturnResult error&quot;, e);</span>
+<span class="fc" id="L360">        }</span>
+<span class="fc" id="L361">        return putMessageResult;</span>
+    }
+
+    private boolean putImmunityMsgBackToHalfQueue(MessageExt messageExt) {
+<span class="nc" id="L365">        MessageExtBrokerInner msgInner = transactionalMessageBridge.renewImmunityHalfMessageInner(messageExt);</span>
+<span class="nc" id="L366">        return transactionalMessageBridge.putMessage(msgInner);</span>
+    }
+
+    /**
+     * Read half message from Half Topic
+     *
+     * @param mq Target message queue, in this method, it means the half message queue.
+     * @param offset Offset in the message queue.
+     * @param nums Pull message number.
+     * @return Messages pulled from half message queue.
+     */
+    private PullResult pullHalfMsg(MessageQueue mq, long offset, int nums) {
+<span class="fc" id="L378">        return transactionalMessageBridge.getHalfMessage(mq.getQueueId(), offset, nums);</span>
+    }
+
+    /**
+     * Read op message from Op Topic
+     *
+     * @param mq Target Message Queue
+     * @param offset Offset in the message queue
+     * @param nums Pull message number
+     * @return Messages pulled from operate message queue.
+     */
+    private PullResult pullOpMsg(MessageQueue mq, long offset, int nums) {
+<span class="fc" id="L390">        return transactionalMessageBridge.getOpMessage(mq.getQueueId(), offset, nums);</span>
+    }
+
+    private Long getLong(String s) {
+<span class="fc" id="L394">        long v = -1;</span>
+        try {
+<span class="fc" id="L396">            v = Long.valueOf(s);</span>
+<span class="nc" id="L397">        } catch (Exception e) {</span>
+<span class="nc" id="L398">            log.error(&quot;GetLong error&quot;, e);</span>
+<span class="fc" id="L399">        }</span>
+<span class="fc" id="L400">        return v;</span>
+
+    }
+
+    private Integer getInt(String s) {
+<span class="fc" id="L405">        int v = -1;</span>
+        try {
+<span class="fc" id="L407">            v = Integer.valueOf(s);</span>
+<span class="nc" id="L408">        } catch (Exception e) {</span>
+<span class="nc" id="L409">            log.error(&quot;GetInt error&quot;, e);</span>
+<span class="fc" id="L410">        }</span>
+<span class="fc" id="L411">        return v;</span>
+
+    }
+
+    private long calculateOpOffset(List&lt;Long&gt; doneOffset, long oldOffset) {
+<span class="fc" id="L416">        Collections.sort(doneOffset);</span>
+<span class="fc" id="L417">        long newOffset = oldOffset;</span>
+<span class="pc bpc" id="L418" title="1 of 2 branches missed.">        for (int i = 0; i &lt; doneOffset.size(); i++) {</span>
+<span class="nc bnc" id="L419" title="All 2 branches missed.">            if (doneOffset.get(i) == newOffset) {</span>
+<span class="nc" id="L420">                newOffset++;</span>
+            } else {
+                break;
+            }
+        }
+<span class="fc" id="L425">        return newOffset;</span>
+
+    }
+
+    private MessageQueue getOpQueue(MessageQueue messageQueue) {
+<span class="fc" id="L430">        MessageQueue opQueue = opQueueMap.get(messageQueue);</span>
+<span class="pc bpc" id="L431" title="1 of 2 branches missed.">        if (opQueue == null) {</span>
+<span class="fc" id="L432">            opQueue = new MessageQueue(TransactionalMessageUtil.buildOpTopic(), messageQueue.getBrokerName(),</span>
+<span class="fc" id="L433">                messageQueue.getQueueId());</span>
+<span class="fc" id="L434">            opQueueMap.put(messageQueue, opQueue);</span>
+        }
+<span class="fc" id="L436">        return opQueue;</span>
+
+    }
+
+    private GetResult getHalfMsg(MessageQueue messageQueue, long offset) {
+<span class="fc" id="L441">        GetResult getResult = new GetResult();</span>
+
+<span class="fc" id="L443">        PullResult result = pullHalfMsg(messageQueue, offset, PULL_MSG_RETRY_NUMBER);</span>
+<span class="fc" id="L444">        getResult.setPullResult(result);</span>
+<span class="fc" id="L445">        List&lt;MessageExt&gt; messageExts = result.getMsgFoundList();</span>
+<span class="fc bfc" id="L446" title="All 2 branches covered.">        if (messageExts == null) {</span>
+<span class="fc" id="L447">            return getResult;</span>
+        }
+<span class="fc" id="L449">        getResult.setMsg(messageExts.get(0));</span>
+<span class="fc" id="L450">        return getResult;</span>
+    }
+
+    private OperationResult getHalfMessageByOffset(long commitLogOffset) {
+<span class="fc" id="L454">        OperationResult response = new OperationResult();</span>
+<span class="fc" id="L455">        MessageExt messageExt = this.transactionalMessageBridge.lookMessageByOffset(commitLogOffset);</span>
+<span class="pc bpc" id="L456" title="1 of 2 branches missed.">        if (messageExt != null) {</span>
+<span class="fc" id="L457">            response.setPrepareMessage(messageExt);</span>
+<span class="fc" id="L458">            response.setResponseCode(ResponseCode.SUCCESS);</span>
+        } else {
+<span class="nc" id="L460">            response.setResponseCode(ResponseCode.SYSTEM_ERROR);</span>
+<span class="nc" id="L461">            response.setResponseRemark(&quot;Find prepared transaction message failed&quot;);</span>
+        }
+<span class="fc" id="L463">        return response;</span>
+    }
+
+    @Override
+    public boolean deletePrepareMessage(MessageExt msgExt) {
+<span class="pc bpc" id="L468" title="1 of 2 branches missed.">        if (this.transactionalMessageBridge.putOpMessage(msgExt, TransactionalMessageUtil.REMOVETAG)) {</span>
+<span class="fc" id="L469">            log.debug(&quot;Transaction op message write successfully. messageId={}, queueId={} msgExt:{}&quot;, msgExt.getMsgId(), msgExt.getQueueId(), msgExt);</span>
+<span class="fc" id="L470">            return true;</span>
+        } else {
+<span class="nc" id="L472">            log.error(&quot;Transaction op message write failed. messageId is {}, queueId is {}&quot;, msgExt.getMsgId(), msgExt.getQueueId());</span>
+<span class="nc" id="L473">            return false;</span>
+        }
+    }
+
+    @Override
+    public OperationResult commitMessage(EndTransactionRequestHeader requestHeader) {
+<span class="fc" id="L479">        return getHalfMessageByOffset(requestHeader.getCommitLogOffset());</span>
+    }
+
+    @Override
+    public OperationResult rollbackMessage(EndTransactionRequestHeader requestHeader) {
+<span class="nc" id="L484">        return getHalfMessageByOffset(requestHeader.getCommitLogOffset());</span>
+    }
+
+    @Override
+    public boolean open() {
+<span class="fc" id="L489">        return true;</span>
+    }
+
+    @Override
+    public void close() {
+
+<span class="nc" id="L495">    }</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.5.201910111838</span></div></body></html>

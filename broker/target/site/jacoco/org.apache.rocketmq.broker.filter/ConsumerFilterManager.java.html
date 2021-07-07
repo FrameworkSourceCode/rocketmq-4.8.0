@@ -1,0 +1,469 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ConsumerFilterManager.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">rocketmq-broker 4.8.0</a> &gt; <a href="index.source.html" class="el_package">org.apache.rocketmq.broker.filter</a> &gt; <span class="el_source">ConsumerFilterManager.java</span></div><h1>ConsumerFilterManager.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.rocketmq.broker.filter;
+
+import java.util.concurrent.ConcurrentMap;
+import org.apache.rocketmq.broker.BrokerController;
+import org.apache.rocketmq.broker.BrokerPathConfigHelper;
+import org.apache.rocketmq.common.ConfigManager;
+import org.apache.rocketmq.common.constant.LoggerName;
+import org.apache.rocketmq.logging.InternalLogger;
+import org.apache.rocketmq.logging.InternalLoggerFactory;
+import org.apache.rocketmq.common.protocol.heartbeat.SubscriptionData;
+import org.apache.rocketmq.filter.FilterFactory;
+import org.apache.rocketmq.common.filter.ExpressionType;
+import org.apache.rocketmq.filter.util.BloomFilter;
+import org.apache.rocketmq.filter.util.BloomFilterData;
+import org.apache.rocketmq.remoting.protocol.RemotingSerializable;
+
+import java.util.Collection;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+
+/**
+ * Consumer filter data manager.Just manage the consumers use expression filter.
+ */
+public class ConsumerFilterManager extends ConfigManager {
+
+<span class="fc" id="L45">    private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.FILTER_LOGGER_NAME);</span>
+
+    private static final long MS_24_HOUR = 24 * 3600 * 1000;
+
+<span class="fc" id="L49">    private ConcurrentMap&lt;String/*Topic*/, FilterDataMapByTopic&gt;</span>
+        filterDataByTopic = new ConcurrentHashMap&lt;String/*Topic*/, FilterDataMapByTopic&gt;(256);
+
+    private transient BrokerController brokerController;
+    private transient BloomFilter bloomFilter;
+
+<span class="fc" id="L55">    public ConsumerFilterManager() {</span>
+        // just for test
+<span class="fc" id="L57">        this.bloomFilter = BloomFilter.createByFn(20, 64);</span>
+<span class="fc" id="L58">    }</span>
+
+<span class="fc" id="L60">    public ConsumerFilterManager(BrokerController brokerController) {</span>
+<span class="fc" id="L61">        this.brokerController = brokerController;</span>
+<span class="fc" id="L62">        this.bloomFilter = BloomFilter.createByFn(</span>
+<span class="fc" id="L63">            brokerController.getBrokerConfig().getMaxErrorRateOfBloomFilter(),</span>
+<span class="fc" id="L64">            brokerController.getBrokerConfig().getExpectConsumerNumUseFilter()</span>
+        );
+        // then set bit map length of store config.
+<span class="fc" id="L67">        brokerController.getMessageStoreConfig().setBitMapLengthConsumeQueueExt(</span>
+<span class="fc" id="L68">            this.bloomFilter.getM()</span>
+        );
+<span class="fc" id="L70">    }</span>
+
+    /**
+     * Build consumer filter data.Be care, bloom filter data is not included.
+     *
+     * @return maybe null
+     */
+    public static ConsumerFilterData build(final String topic, final String consumerGroup,
+        final String expression, final String type,
+        final long clientVersion) {
+<span class="pc bpc" id="L80" title="1 of 2 branches missed.">        if (ExpressionType.isTagType(type)) {</span>
+<span class="nc" id="L81">            return null;</span>
+        }
+
+<span class="fc" id="L84">        ConsumerFilterData consumerFilterData = new ConsumerFilterData();</span>
+<span class="fc" id="L85">        consumerFilterData.setTopic(topic);</span>
+<span class="fc" id="L86">        consumerFilterData.setConsumerGroup(consumerGroup);</span>
+<span class="fc" id="L87">        consumerFilterData.setBornTime(System.currentTimeMillis());</span>
+<span class="fc" id="L88">        consumerFilterData.setDeadTime(0);</span>
+<span class="fc" id="L89">        consumerFilterData.setExpression(expression);</span>
+<span class="fc" id="L90">        consumerFilterData.setExpressionType(type);</span>
+<span class="fc" id="L91">        consumerFilterData.setClientVersion(clientVersion);</span>
+        try {
+<span class="fc" id="L93">            consumerFilterData.setCompiledExpression(</span>
+<span class="fc" id="L94">                FilterFactory.INSTANCE.get(type).compile(expression)</span>
+            );
+<span class="fc" id="L96">        } catch (Throwable e) {</span>
+<span class="fc" id="L97">            log.error(&quot;parse error: expr={}, topic={}, group={}, error={}&quot;, expression, topic, consumerGroup, e.getMessage());</span>
+<span class="fc" id="L98">            return null;</span>
+<span class="fc" id="L99">        }</span>
+
+<span class="fc" id="L101">        return consumerFilterData;</span>
+    }
+
+    public void register(final String consumerGroup, final Collection&lt;SubscriptionData&gt; subList) {
+<span class="fc bfc" id="L105" title="All 2 branches covered.">        for (SubscriptionData subscriptionData : subList) {</span>
+<span class="fc" id="L106">            register(</span>
+<span class="fc" id="L107">                subscriptionData.getTopic(),</span>
+                consumerGroup,
+<span class="fc" id="L109">                subscriptionData.getSubString(),</span>
+<span class="fc" id="L110">                subscriptionData.getExpressionType(),</span>
+<span class="fc" id="L111">                subscriptionData.getSubVersion()</span>
+            );
+<span class="fc" id="L113">        }</span>
+
+        // make illegal topic dead.
+<span class="fc" id="L116">        Collection&lt;ConsumerFilterData&gt; groupFilterData = getByGroup(consumerGroup);</span>
+
+<span class="fc" id="L118">        Iterator&lt;ConsumerFilterData&gt; iterator = groupFilterData.iterator();</span>
+<span class="fc bfc" id="L119" title="All 2 branches covered.">        while (iterator.hasNext()) {</span>
+<span class="fc" id="L120">            ConsumerFilterData filterData = iterator.next();</span>
+
+<span class="fc" id="L122">            boolean exist = false;</span>
+<span class="pc bpc" id="L123" title="1 of 2 branches missed.">            for (SubscriptionData subscriptionData : subList) {</span>
+<span class="fc bfc" id="L124" title="All 2 branches covered.">                if (subscriptionData.getTopic().equals(filterData.getTopic())) {</span>
+<span class="fc" id="L125">                    exist = true;</span>
+<span class="fc" id="L126">                    break;</span>
+                }
+<span class="fc" id="L128">            }</span>
+
+<span class="pc bpc" id="L130" title="3 of 4 branches missed.">            if (!exist &amp;&amp; !filterData.isDead()) {</span>
+<span class="nc" id="L131">                filterData.setDeadTime(System.currentTimeMillis());</span>
+<span class="nc" id="L132">                log.info(&quot;Consumer filter changed: {}, make illegal topic dead:{}&quot;, consumerGroup, filterData);</span>
+            }
+<span class="fc" id="L134">        }</span>
+<span class="fc" id="L135">    }</span>
+
+    public boolean register(final String topic, final String consumerGroup, final String expression,
+        final String type, final long clientVersion) {
+<span class="fc bfc" id="L139" title="All 2 branches covered.">        if (ExpressionType.isTagType(type)) {</span>
+<span class="fc" id="L140">            return false;</span>
+        }
+
+<span class="pc bpc" id="L143" title="2 of 4 branches missed.">        if (expression == null || expression.length() == 0) {</span>
+<span class="nc" id="L144">            return false;</span>
+        }
+
+<span class="fc" id="L147">        FilterDataMapByTopic filterDataMapByTopic = this.filterDataByTopic.get(topic);</span>
+
+<span class="fc bfc" id="L149" title="All 2 branches covered.">        if (filterDataMapByTopic == null) {</span>
+<span class="fc" id="L150">            FilterDataMapByTopic temp = new FilterDataMapByTopic(topic);</span>
+<span class="fc" id="L151">            FilterDataMapByTopic prev = this.filterDataByTopic.putIfAbsent(topic, temp);</span>
+<span class="pc bpc" id="L152" title="1 of 2 branches missed.">            filterDataMapByTopic = prev != null ? prev : temp;</span>
+        }
+
+<span class="fc" id="L155">        BloomFilterData bloomFilterData = bloomFilter.generate(consumerGroup + &quot;#&quot; + topic);</span>
+
+<span class="fc" id="L157">        return filterDataMapByTopic.register(consumerGroup, expression, type, bloomFilterData, clientVersion);</span>
+    }
+
+    public void unRegister(final String consumerGroup) {
+<span class="fc bfc" id="L161" title="All 2 branches covered.">        for (String topic : filterDataByTopic.keySet()) {</span>
+<span class="fc" id="L162">            this.filterDataByTopic.get(topic).unRegister(consumerGroup);</span>
+<span class="fc" id="L163">        }</span>
+<span class="fc" id="L164">    }</span>
+
+    public ConsumerFilterData get(final String topic, final String consumerGroup) {
+<span class="fc bfc" id="L167" title="All 2 branches covered.">        if (!this.filterDataByTopic.containsKey(topic)) {</span>
+<span class="fc" id="L168">            return null;</span>
+        }
+<span class="pc bpc" id="L170" title="1 of 2 branches missed.">        if (this.filterDataByTopic.get(topic).getGroupFilterData().isEmpty()) {</span>
+<span class="nc" id="L171">            return null;</span>
+        }
+
+<span class="fc" id="L174">        return this.filterDataByTopic.get(topic).getGroupFilterData().get(consumerGroup);</span>
+    }
+
+    public Collection&lt;ConsumerFilterData&gt; getByGroup(final String consumerGroup) {
+<span class="fc" id="L178">        Collection&lt;ConsumerFilterData&gt; ret = new HashSet&lt;ConsumerFilterData&gt;();</span>
+
+<span class="fc" id="L180">        Iterator&lt;FilterDataMapByTopic&gt; topicIterator = this.filterDataByTopic.values().iterator();</span>
+<span class="fc bfc" id="L181" title="All 2 branches covered.">        while (topicIterator.hasNext()) {</span>
+<span class="fc" id="L182">            FilterDataMapByTopic filterDataMapByTopic = topicIterator.next();</span>
+
+<span class="fc" id="L184">            Iterator&lt;ConsumerFilterData&gt; filterDataIterator = filterDataMapByTopic.getGroupFilterData().values().iterator();</span>
+
+<span class="fc bfc" id="L186" title="All 2 branches covered.">            while (filterDataIterator.hasNext()) {</span>
+<span class="fc" id="L187">                ConsumerFilterData filterData = filterDataIterator.next();</span>
+
+<span class="pc bpc" id="L189" title="1 of 2 branches missed.">                if (filterData.getConsumerGroup().equals(consumerGroup)) {</span>
+<span class="fc" id="L190">                    ret.add(filterData);</span>
+                }
+<span class="fc" id="L192">            }</span>
+<span class="fc" id="L193">        }</span>
+
+<span class="fc" id="L195">        return ret;</span>
+    }
+
+    public final Collection&lt;ConsumerFilterData&gt; get(final String topic) {
+<span class="fc bfc" id="L199" title="All 2 branches covered.">        if (!this.filterDataByTopic.containsKey(topic)) {</span>
+<span class="fc" id="L200">            return null;</span>
+        }
+<span class="pc bpc" id="L202" title="1 of 2 branches missed.">        if (this.filterDataByTopic.get(topic).getGroupFilterData().isEmpty()) {</span>
+<span class="nc" id="L203">            return null;</span>
+        }
+
+<span class="fc" id="L206">        return this.filterDataByTopic.get(topic).getGroupFilterData().values();</span>
+    }
+
+    public BloomFilter getBloomFilter() {
+<span class="fc" id="L210">        return bloomFilter;</span>
+    }
+
+    @Override
+    public String encode() {
+<span class="nc" id="L215">        return encode(false);</span>
+    }
+
+    @Override
+    public String configFilePath() {
+<span class="fc bfc" id="L220" title="All 2 branches covered.">        if (this.brokerController != null) {</span>
+<span class="fc" id="L221">            return BrokerPathConfigHelper.getConsumerFilterPath(</span>
+<span class="fc" id="L222">                this.brokerController.getMessageStoreConfig().getStorePathRootDir()</span>
+            );
+        }
+<span class="fc" id="L225">        return BrokerPathConfigHelper.getConsumerFilterPath(&quot;./unit_test&quot;);</span>
+    }
+
+    @Override
+    public void decode(final String jsonString) {
+<span class="fc" id="L230">        ConsumerFilterManager load = RemotingSerializable.fromJson(jsonString, ConsumerFilterManager.class);</span>
+<span class="pc bpc" id="L231" title="2 of 4 branches missed.">        if (load != null &amp;&amp; load.filterDataByTopic != null) {</span>
+<span class="fc" id="L232">            boolean bloomChanged = false;</span>
+<span class="fc bfc" id="L233" title="All 2 branches covered.">            for (String topic : load.filterDataByTopic.keySet()) {</span>
+<span class="fc" id="L234">                FilterDataMapByTopic dataMapByTopic = load.filterDataByTopic.get(topic);</span>
+<span class="pc bpc" id="L235" title="1 of 2 branches missed.">                if (dataMapByTopic == null) {</span>
+<span class="nc" id="L236">                    continue;</span>
+                }
+
+<span class="fc bfc" id="L239" title="All 2 branches covered.">                for (String group : dataMapByTopic.getGroupFilterData().keySet()) {</span>
+
+<span class="fc" id="L241">                    ConsumerFilterData filterData = dataMapByTopic.getGroupFilterData().get(group);</span>
+
+<span class="pc bpc" id="L243" title="1 of 2 branches missed.">                    if (filterData == null) {</span>
+<span class="nc" id="L244">                        continue;</span>
+                    }
+
+                    try {
+<span class="fc" id="L248">                        filterData.setCompiledExpression(</span>
+<span class="fc" id="L249">                            FilterFactory.INSTANCE.get(filterData.getExpressionType()).compile(filterData.getExpression())</span>
+                        );
+<span class="nc" id="L251">                    } catch (Exception e) {</span>
+<span class="nc" id="L252">                        log.error(&quot;load filter data error, &quot; + filterData, e);</span>
+<span class="fc" id="L253">                    }</span>
+
+                    // check whether bloom filter is changed
+                    // if changed, ignore the bit map calculated before.
+<span class="pc bpc" id="L257" title="1 of 2 branches missed.">                    if (!this.bloomFilter.isValid(filterData.getBloomFilterData())) {</span>
+<span class="nc" id="L258">                        bloomChanged = true;</span>
+<span class="nc" id="L259">                        log.info(&quot;Bloom filter is changed!So ignore all filter data persisted! {}, {}&quot;, this.bloomFilter, filterData.getBloomFilterData());</span>
+<span class="nc" id="L260">                        break;</span>
+                    }
+
+<span class="fc" id="L263">                    log.info(&quot;load exist consumer filter data: {}&quot;, filterData);</span>
+
+<span class="pc bpc" id="L265" title="1 of 2 branches missed.">                    if (filterData.getDeadTime() == 0) {</span>
+                        // we think all consumers are dead when load
+<span class="fc" id="L267">                        long deadTime = System.currentTimeMillis() - 30 * 1000;</span>
+<span class="fc" id="L268">                        filterData.setDeadTime(</span>
+<span class="pc bpc" id="L269" title="1 of 2 branches missed.">                            deadTime &lt;= filterData.getBornTime() ? filterData.getBornTime() : deadTime</span>
+                        );
+                    }
+<span class="fc" id="L272">                }</span>
+<span class="fc" id="L273">            }</span>
+
+<span class="pc bpc" id="L275" title="1 of 2 branches missed.">            if (!bloomChanged) {</span>
+<span class="fc" id="L276">                this.filterDataByTopic = load.filterDataByTopic;</span>
+            }
+        }
+<span class="fc" id="L279">    }</span>
+
+    @Override
+    public String encode(final boolean prettyFormat) {
+        // clean
+        {
+<span class="fc" id="L285">            clean();</span>
+        }
+<span class="fc" id="L287">        return RemotingSerializable.toJson(this, prettyFormat);</span>
+    }
+
+    public void clean() {
+<span class="fc" id="L291">        Iterator&lt;Map.Entry&lt;String, FilterDataMapByTopic&gt;&gt; topicIterator = this.filterDataByTopic.entrySet().iterator();</span>
+<span class="fc bfc" id="L292" title="All 2 branches covered.">        while (topicIterator.hasNext()) {</span>
+<span class="fc" id="L293">            Map.Entry&lt;String, FilterDataMapByTopic&gt; filterDataMapByTopic = topicIterator.next();</span>
+
+<span class="fc" id="L295">            Iterator&lt;Map.Entry&lt;String, ConsumerFilterData&gt;&gt; filterDataIterator</span>
+<span class="fc" id="L296">                = filterDataMapByTopic.getValue().getGroupFilterData().entrySet().iterator();</span>
+
+<span class="fc bfc" id="L298" title="All 2 branches covered.">            while (filterDataIterator.hasNext()) {</span>
+<span class="fc" id="L299">                Map.Entry&lt;String, ConsumerFilterData&gt; filterDataByGroup = filterDataIterator.next();</span>
+
+<span class="fc" id="L301">                ConsumerFilterData filterData = filterDataByGroup.getValue();</span>
+<span class="pc bpc" id="L302" title="1 of 4 branches missed.">                if (filterData.howLongAfterDeath() &gt;= (this.brokerController == null ? MS_24_HOUR : this.brokerController.getBrokerConfig().getFilterDataCleanTimeSpan())) {</span>
+<span class="fc" id="L303">                    log.info(&quot;Remove filter consumer {}, died too long!&quot;, filterDataByGroup.getValue());</span>
+<span class="fc" id="L304">                    filterDataIterator.remove();</span>
+                }
+<span class="fc" id="L306">            }</span>
+
+<span class="fc bfc" id="L308" title="All 2 branches covered.">            if (filterDataMapByTopic.getValue().getGroupFilterData().isEmpty()) {</span>
+<span class="fc" id="L309">                log.info(&quot;Topic has no consumer, remove it! {}&quot;, filterDataMapByTopic.getKey());</span>
+<span class="fc" id="L310">                topicIterator.remove();</span>
+            }
+<span class="fc" id="L312">        }</span>
+<span class="fc" id="L313">    }</span>
+
+    public ConcurrentMap&lt;String, FilterDataMapByTopic&gt; getFilterDataByTopic() {
+<span class="fc" id="L316">        return filterDataByTopic;</span>
+    }
+
+    public void setFilterDataByTopic(final ConcurrentHashMap&lt;String, FilterDataMapByTopic&gt; filterDataByTopic) {
+<span class="fc" id="L320">        this.filterDataByTopic = filterDataByTopic;</span>
+<span class="fc" id="L321">    }</span>
+
+    public static class FilterDataMapByTopic {
+
+<span class="fc" id="L325">        private ConcurrentMap&lt;String/*consumer group*/, ConsumerFilterData&gt;</span>
+            groupFilterData = new ConcurrentHashMap&lt;String, ConsumerFilterData&gt;();
+
+        private String topic;
+
+<span class="fc" id="L330">        public FilterDataMapByTopic() {</span>
+<span class="fc" id="L331">        }</span>
+
+<span class="fc" id="L333">        public FilterDataMapByTopic(String topic) {</span>
+<span class="fc" id="L334">            this.topic = topic;</span>
+<span class="fc" id="L335">        }</span>
+
+        public void unRegister(String consumerGroup) {
+<span class="pc bpc" id="L338" title="1 of 2 branches missed.">            if (!this.groupFilterData.containsKey(consumerGroup)) {</span>
+<span class="nc" id="L339">                return;</span>
+            }
+
+<span class="fc" id="L342">            ConsumerFilterData data = this.groupFilterData.get(consumerGroup);</span>
+
+<span class="pc bpc" id="L344" title="2 of 4 branches missed.">            if (data == null || data.isDead()) {</span>
+<span class="nc" id="L345">                return;</span>
+            }
+
+<span class="fc" id="L348">            long now = System.currentTimeMillis();</span>
+
+<span class="fc" id="L350">            log.info(&quot;Unregister consumer filter: {}, deadTime: {}&quot;, data, now);</span>
+
+<span class="fc" id="L352">            data.setDeadTime(now);</span>
+<span class="fc" id="L353">        }</span>
+
+        public boolean register(String consumerGroup, String expression, String type, BloomFilterData bloomFilterData,
+            long clientVersion) {
+<span class="fc" id="L357">            ConsumerFilterData old = this.groupFilterData.get(consumerGroup);</span>
+
+<span class="fc bfc" id="L359" title="All 2 branches covered.">            if (old == null) {</span>
+<span class="fc" id="L360">                ConsumerFilterData consumerFilterData = build(topic, consumerGroup, expression, type, clientVersion);</span>
+<span class="pc bpc" id="L361" title="1 of 2 branches missed.">                if (consumerFilterData == null) {</span>
+<span class="nc" id="L362">                    return false;</span>
+                }
+<span class="fc" id="L364">                consumerFilterData.setBloomFilterData(bloomFilterData);</span>
+
+<span class="fc" id="L366">                old = this.groupFilterData.putIfAbsent(consumerGroup, consumerFilterData);</span>
+<span class="pc bpc" id="L367" title="1 of 2 branches missed.">                if (old == null) {</span>
+<span class="fc" id="L368">                    log.info(&quot;New consumer filter registered: {}&quot;, consumerFilterData);</span>
+<span class="fc" id="L369">                    return true;</span>
+                } else {
+<span class="nc bnc" id="L371" title="All 2 branches missed.">                    if (clientVersion &lt;= old.getClientVersion()) {</span>
+<span class="nc bnc" id="L372" title="All 4 branches missed.">                        if (!type.equals(old.getExpressionType()) || !expression.equals(old.getExpression())) {</span>
+<span class="nc" id="L373">                            log.warn(&quot;Ignore consumer({} : {}) filter(concurrent), because of version {} &lt;= {}, but maybe info changed!old={}:{}, ignored={}:{}&quot;,</span>
+                                consumerGroup, topic,
+<span class="nc" id="L375">                                clientVersion, old.getClientVersion(),</span>
+<span class="nc" id="L376">                                old.getExpressionType(), old.getExpression(),</span>
+                                type, expression);
+                        }
+<span class="nc bnc" id="L379" title="All 4 branches missed.">                        if (clientVersion == old.getClientVersion() &amp;&amp; old.isDead()) {</span>
+<span class="nc" id="L380">                            reAlive(old);</span>
+<span class="nc" id="L381">                            return true;</span>
+                        }
+
+<span class="nc" id="L384">                        return false;</span>
+                    } else {
+<span class="nc" id="L386">                        this.groupFilterData.put(consumerGroup, consumerFilterData);</span>
+<span class="nc" id="L387">                        log.info(&quot;New consumer filter registered(concurrent): {}, old: {}&quot;, consumerFilterData, old);</span>
+<span class="nc" id="L388">                        return true;</span>
+                    }
+                }
+            } else {
+<span class="fc bfc" id="L392" title="All 2 branches covered.">                if (clientVersion &lt;= old.getClientVersion()) {</span>
+<span class="pc bpc" id="L393" title="1 of 4 branches missed.">                    if (!type.equals(old.getExpressionType()) || !expression.equals(old.getExpression())) {</span>
+<span class="fc" id="L394">                        log.info(&quot;Ignore consumer({}:{}) filter, because of version {} &lt;= {}, but maybe info changed!old={}:{}, ignored={}:{}&quot;,</span>
+                            consumerGroup, topic,
+<span class="fc" id="L396">                            clientVersion, old.getClientVersion(),</span>
+<span class="fc" id="L397">                            old.getExpressionType(), old.getExpression(),</span>
+                            type, expression);
+                    }
+<span class="pc bpc" id="L400" title="1 of 4 branches missed.">                    if (clientVersion == old.getClientVersion() &amp;&amp; old.isDead()) {</span>
+<span class="fc" id="L401">                        reAlive(old);</span>
+<span class="fc" id="L402">                        return true;</span>
+                    }
+
+<span class="fc" id="L405">                    return false;</span>
+                }
+
+<span class="pc bpc" id="L408" title="3 of 4 branches missed.">                boolean change = !old.getExpression().equals(expression) || !old.getExpressionType().equals(type);</span>
+<span class="pc bpc" id="L409" title="3 of 4 branches missed.">                if (old.getBloomFilterData() == null &amp;&amp; bloomFilterData != null) {</span>
+<span class="nc" id="L410">                    change = true;</span>
+                }
+<span class="pc bpc" id="L412" title="2 of 4 branches missed.">                if (old.getBloomFilterData() != null &amp;&amp; !old.getBloomFilterData().equals(bloomFilterData)) {</span>
+<span class="nc" id="L413">                    change = true;</span>
+                }
+
+                // if subscribe data is changed, or consumer is died too long.
+<span class="pc bpc" id="L417" title="1 of 2 branches missed.">                if (change) {</span>
+<span class="fc" id="L418">                    ConsumerFilterData consumerFilterData = build(topic, consumerGroup, expression, type, clientVersion);</span>
+<span class="fc bfc" id="L419" title="All 2 branches covered.">                    if (consumerFilterData == null) {</span>
+                        // new expression compile error, remove old, let client report error.
+<span class="fc" id="L421">                        this.groupFilterData.remove(consumerGroup);</span>
+<span class="fc" id="L422">                        return false;</span>
+                    }
+<span class="fc" id="L424">                    consumerFilterData.setBloomFilterData(bloomFilterData);</span>
+
+<span class="fc" id="L426">                    this.groupFilterData.put(consumerGroup, consumerFilterData);</span>
+
+<span class="fc" id="L428">                    log.info(&quot;Consumer filter info change, old: {}, new: {}, change: {}&quot;,</span>
+<span class="fc" id="L429">                        old, consumerFilterData, change);</span>
+
+<span class="fc" id="L431">                    return true;</span>
+                } else {
+<span class="nc" id="L433">                    old.setClientVersion(clientVersion);</span>
+<span class="nc bnc" id="L434" title="All 2 branches missed.">                    if (old.isDead()) {</span>
+<span class="nc" id="L435">                        reAlive(old);</span>
+                    }
+<span class="nc" id="L437">                    return true;</span>
+                }
+            }
+        }
+
+        protected void reAlive(ConsumerFilterData filterData) {
+<span class="fc" id="L443">            long oldDeadTime = filterData.getDeadTime();</span>
+<span class="fc" id="L444">            filterData.setDeadTime(0);</span>
+<span class="fc" id="L445">            log.info(&quot;Re alive consumer filter: {}, oldDeadTime: {}&quot;, filterData, oldDeadTime);</span>
+<span class="fc" id="L446">        }</span>
+
+        public final ConsumerFilterData get(String consumerGroup) {
+<span class="nc" id="L449">            return this.groupFilterData.get(consumerGroup);</span>
+        }
+
+        public final ConcurrentMap&lt;String, ConsumerFilterData&gt; getGroupFilterData() {
+<span class="fc" id="L453">            return this.groupFilterData;</span>
+        }
+
+        public void setGroupFilterData(final ConcurrentHashMap&lt;String, ConsumerFilterData&gt; groupFilterData) {
+<span class="fc" id="L457">            this.groupFilterData = groupFilterData;</span>
+<span class="fc" id="L458">        }</span>
+
+        public String getTopic() {
+<span class="fc" id="L461">            return topic;</span>
+        }
+
+        public void setTopic(final String topic) {
+<span class="fc" id="L465">            this.topic = topic;</span>
+<span class="fc" id="L466">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.5.201910111838</span></div></body></html>

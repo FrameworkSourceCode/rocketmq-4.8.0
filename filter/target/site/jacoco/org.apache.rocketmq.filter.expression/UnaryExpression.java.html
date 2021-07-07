@@ -1,0 +1,266 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>UnaryExpression.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">rocketmq-filter 4.8.0</a> &gt; <a href="index.source.html" class="el_package">org.apache.rocketmq.filter.expression</a> &gt; <span class="el_source">UnaryExpression.java</span></div><h1>UnaryExpression.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.rocketmq.filter.expression;
+
+import org.apache.rocketmq.filter.constant.UnaryType;
+
+import java.math.BigDecimal;
+import java.util.Collection;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+
+/**
+ * An expression which performs an operation on two expression values
+ * &lt;p&gt;
+ * This class was taken from ActiveMQ org.apache.activemq.filter.UnaryExpression,
+ * but:
+ * 1. remove XPath and XQuery expression;
+ * 2. Add constant UnaryType to distinguish different unary expression;
+ * 3. Extract UnaryInExpression to an independent class.
+ * &lt;/p&gt;
+ */
+public abstract class UnaryExpression implements Expression {
+
+<span class="fc" id="L40">    private static final BigDecimal BD_LONG_MIN_VALUE = BigDecimal.valueOf(Long.MIN_VALUE);</span>
+    protected Expression right;
+
+    public UnaryType unaryType;
+
+<span class="nc" id="L45">    public UnaryExpression(Expression left) {</span>
+<span class="nc" id="L46">        this.right = left;</span>
+<span class="nc" id="L47">    }</span>
+
+<span class="fc" id="L49">    public UnaryExpression(Expression left, UnaryType unaryType) {</span>
+<span class="fc" id="L50">        this.setUnaryType(unaryType);</span>
+<span class="fc" id="L51">        this.right = left;</span>
+<span class="fc" id="L52">    }</span>
+
+    public static Expression createNegate(Expression left) {
+<span class="nc" id="L55">        return new UnaryExpression(left, UnaryType.NEGATE) {</span>
+            public Object evaluate(EvaluationContext context) throws Exception {
+<span class="nc" id="L57">                Object rvalue = right.evaluate(context);</span>
+<span class="nc bnc" id="L58" title="All 2 branches missed.">                if (rvalue == null) {</span>
+<span class="nc" id="L59">                    return null;</span>
+                }
+<span class="nc bnc" id="L61" title="All 2 branches missed.">                if (rvalue instanceof Number) {</span>
+<span class="nc" id="L62">                    return negate((Number) rvalue);</span>
+                }
+<span class="nc" id="L64">                return null;</span>
+            }
+
+            public String getExpressionSymbol() {
+<span class="nc" id="L68">                return &quot;-&quot;;</span>
+            }
+        };
+    }
+
+    public static BooleanExpression createInExpression(PropertyExpression right, List&lt;Object&gt; elements,
+        final boolean not) {
+
+        // Use a HashSet if there are many elements.
+        Collection&lt;Object&gt; t;
+<span class="pc bpc" id="L78" title="1 of 2 branches missed.">        if (elements.size() == 0) {</span>
+<span class="nc" id="L79">            t = null;</span>
+<span class="pc bpc" id="L80" title="1 of 2 branches missed.">        } else if (elements.size() &lt; 5) {</span>
+<span class="fc" id="L81">            t = elements;</span>
+        } else {
+<span class="nc" id="L83">            t = new HashSet&lt;Object&gt;(elements);</span>
+        }
+<span class="fc" id="L85">        final Collection inList = t;</span>
+
+<span class="fc" id="L87">        return new UnaryInExpression(right, UnaryType.IN, inList, not) {</span>
+            public Object evaluate(EvaluationContext context) throws Exception {
+
+<span class="fc" id="L90">                Object rvalue = right.evaluate(context);</span>
+<span class="pc bpc" id="L91" title="1 of 2 branches missed.">                if (rvalue == null) {</span>
+<span class="nc" id="L92">                    return null;</span>
+                }
+<span class="pc bpc" id="L94" title="1 of 2 branches missed.">                if (rvalue.getClass() != String.class) {</span>
+<span class="nc" id="L95">                    return null;</span>
+                }
+
+<span class="pc bpc" id="L98" title="1 of 6 branches missed.">                if ((inList != null &amp;&amp; inList.contains(rvalue)) ^ not) {</span>
+<span class="fc" id="L99">                    return Boolean.TRUE;</span>
+                } else {
+<span class="fc" id="L101">                    return Boolean.FALSE;</span>
+                }
+
+            }
+
+            public String toString() {
+<span class="nc" id="L107">                StringBuffer answer = new StringBuffer();</span>
+<span class="nc" id="L108">                answer.append(right);</span>
+<span class="nc" id="L109">                answer.append(&quot; &quot;);</span>
+<span class="nc" id="L110">                answer.append(getExpressionSymbol());</span>
+<span class="nc" id="L111">                answer.append(&quot; ( &quot;);</span>
+
+<span class="nc" id="L113">                int count = 0;</span>
+<span class="nc bnc" id="L114" title="All 2 branches missed.">                for (Iterator i = inList.iterator(); i.hasNext(); ) {</span>
+<span class="nc" id="L115">                    Object o = (Object) i.next();</span>
+<span class="nc bnc" id="L116" title="All 2 branches missed.">                    if (count != 0) {</span>
+<span class="nc" id="L117">                        answer.append(&quot;, &quot;);</span>
+                    }
+<span class="nc" id="L119">                    answer.append(o);</span>
+<span class="nc" id="L120">                    count++;</span>
+<span class="nc" id="L121">                }</span>
+
+<span class="nc" id="L123">                answer.append(&quot; )&quot;);</span>
+<span class="nc" id="L124">                return answer.toString();</span>
+            }
+
+            public String getExpressionSymbol() {
+<span class="nc bnc" id="L128" title="All 2 branches missed.">                if (not) {</span>
+<span class="nc" id="L129">                    return &quot;NOT IN&quot;;</span>
+                } else {
+<span class="nc" id="L131">                    return &quot;IN&quot;;</span>
+                }
+            }
+        };
+    }
+
+    abstract static class BooleanUnaryExpression extends UnaryExpression implements BooleanExpression {
+        public BooleanUnaryExpression(Expression left, UnaryType unaryType) {
+<span class="fc" id="L139">            super(left, unaryType);</span>
+<span class="fc" id="L140">        }</span>
+
+        public boolean matches(EvaluationContext context) throws Exception {
+<span class="nc" id="L143">            Object object = evaluate(context);</span>
+<span class="nc bnc" id="L144" title="All 4 branches missed.">            return object != null &amp;&amp; object == Boolean.TRUE;</span>
+        }
+    }
+
+    public static BooleanExpression createNOT(BooleanExpression left) {
+<span class="fc" id="L149">        return new BooleanUnaryExpression(left, UnaryType.NOT) {</span>
+            public Object evaluate(EvaluationContext context) throws Exception {
+<span class="fc" id="L151">                Boolean lvalue = (Boolean) right.evaluate(context);</span>
+<span class="pc bpc" id="L152" title="1 of 2 branches missed.">                if (lvalue == null) {</span>
+<span class="nc" id="L153">                    return null;</span>
+                }
+<span class="fc bfc" id="L155" title="All 2 branches covered.">                return lvalue.booleanValue() ? Boolean.FALSE : Boolean.TRUE;</span>
+            }
+
+            public String getExpressionSymbol() {
+<span class="fc" id="L159">                return &quot;NOT&quot;;</span>
+            }
+        };
+    }
+
+    public static BooleanExpression createBooleanCast(Expression left) {
+<span class="nc" id="L165">        return new BooleanUnaryExpression(left, UnaryType.BOOLEANCAST) {</span>
+            public Object evaluate(EvaluationContext context) throws Exception {
+<span class="nc" id="L167">                Object rvalue = right.evaluate(context);</span>
+<span class="nc bnc" id="L168" title="All 2 branches missed.">                if (rvalue == null) {</span>
+<span class="nc" id="L169">                    return null;</span>
+                }
+<span class="nc bnc" id="L171" title="All 2 branches missed.">                if (!rvalue.getClass().equals(Boolean.class)) {</span>
+<span class="nc" id="L172">                    return Boolean.FALSE;</span>
+                }
+<span class="nc bnc" id="L174" title="All 2 branches missed.">                return ((Boolean) rvalue).booleanValue() ? Boolean.TRUE : Boolean.FALSE;</span>
+            }
+
+            public String toString() {
+<span class="nc" id="L178">                return right.toString();</span>
+            }
+
+            public String getExpressionSymbol() {
+<span class="nc" id="L182">                return &quot;&quot;;</span>
+            }
+        };
+    }
+
+    private static Number negate(Number left) {
+<span class="nc" id="L188">        Class clazz = left.getClass();</span>
+<span class="nc bnc" id="L189" title="All 2 branches missed.">        if (clazz == Integer.class) {</span>
+<span class="nc" id="L190">            return new Integer(-left.intValue());</span>
+<span class="nc bnc" id="L191" title="All 2 branches missed.">        } else if (clazz == Long.class) {</span>
+<span class="nc" id="L192">            return new Long(-left.longValue());</span>
+<span class="nc bnc" id="L193" title="All 2 branches missed.">        } else if (clazz == Float.class) {</span>
+<span class="nc" id="L194">            return new Float(-left.floatValue());</span>
+<span class="nc bnc" id="L195" title="All 2 branches missed.">        } else if (clazz == Double.class) {</span>
+<span class="nc" id="L196">            return new Double(-left.doubleValue());</span>
+<span class="nc bnc" id="L197" title="All 2 branches missed.">        } else if (clazz == BigDecimal.class) {</span>
+            // We ussually get a big deciamal when we have Long.MIN_VALUE
+            // constant in the
+            // Selector. Long.MIN_VALUE is too big to store in a Long as a
+            // positive so we store it
+            // as a Big decimal. But it gets Negated right away.. to here we try
+            // to covert it back
+            // to a Long.
+<span class="nc" id="L205">            BigDecimal bd = (BigDecimal) left;</span>
+<span class="nc" id="L206">            bd = bd.negate();</span>
+
+<span class="nc bnc" id="L208" title="All 2 branches missed.">            if (BD_LONG_MIN_VALUE.compareTo(bd) == 0) {</span>
+<span class="nc" id="L209">                return Long.valueOf(Long.MIN_VALUE);</span>
+            }
+<span class="nc" id="L211">            return bd;</span>
+        } else {
+<span class="nc" id="L213">            throw new RuntimeException(&quot;Don't know how to negate: &quot; + left);</span>
+        }
+    }
+
+    public Expression getRight() {
+<span class="nc" id="L218">        return right;</span>
+    }
+
+    public void setRight(Expression expression) {
+<span class="nc" id="L222">        right = expression;</span>
+<span class="nc" id="L223">    }</span>
+
+    public UnaryType getUnaryType() {
+<span class="nc" id="L226">        return unaryType;</span>
+    }
+
+    public void setUnaryType(UnaryType unaryType) {
+<span class="fc" id="L230">        this.unaryType = unaryType;</span>
+<span class="fc" id="L231">    }</span>
+
+    /**
+     * @see Object#toString()
+     */
+    public String toString() {
+<span class="fc" id="L237">        return &quot;(&quot; + getExpressionSymbol() + &quot; &quot; + right.toString() + &quot;)&quot;;</span>
+    }
+
+    /**
+     * @see Object#hashCode()
+     */
+    public int hashCode() {
+<span class="nc" id="L244">        return toString().hashCode();</span>
+    }
+
+    /**
+     * @see Object#equals(Object)
+     */
+    public boolean equals(Object o) {
+
+<span class="nc bnc" id="L252" title="All 4 branches missed.">        if (o == null || !this.getClass().equals(o.getClass())) {</span>
+<span class="nc" id="L253">            return false;</span>
+        }
+<span class="nc" id="L255">        return toString().equals(o.toString());</span>
+
+    }
+
+    /**
+     * Returns the symbol that represents this binary expression. For example,
+     * addition is represented by &quot;+&quot;
+     */
+    public abstract String getExpressionSymbol();
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.5.201910111838</span></div></body></html>

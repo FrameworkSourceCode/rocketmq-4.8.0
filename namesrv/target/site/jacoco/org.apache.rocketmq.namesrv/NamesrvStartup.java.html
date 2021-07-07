@@ -1,0 +1,179 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>NamesrvStartup.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">rocketmq-namesrv 4.8.0</a> &gt; <a href="index.source.html" class="el_package">org.apache.rocketmq.namesrv</a> &gt; <span class="el_source">NamesrvStartup.java</span></div><h1>NamesrvStartup.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.rocketmq.namesrv;
+
+import ch.qos.logback.classic.LoggerContext;
+import ch.qos.logback.classic.joran.JoranConfigurator;
+import ch.qos.logback.core.joran.spi.JoranException;
+import java.io.BufferedInputStream;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.Properties;
+import java.util.concurrent.Callable;
+import org.apache.commons.cli.CommandLine;
+import org.apache.commons.cli.Option;
+import org.apache.commons.cli.Options;
+import org.apache.commons.cli.PosixParser;
+import org.apache.rocketmq.common.MQVersion;
+import org.apache.rocketmq.common.MixAll;
+import org.apache.rocketmq.common.constant.LoggerName;
+import org.apache.rocketmq.logging.InternalLogger;
+import org.apache.rocketmq.logging.InternalLoggerFactory;
+import org.apache.rocketmq.common.namesrv.NamesrvConfig;
+import org.apache.rocketmq.remoting.netty.NettyServerConfig;
+import org.apache.rocketmq.remoting.protocol.RemotingCommand;
+import org.apache.rocketmq.srvutil.ServerUtil;
+import org.apache.rocketmq.srvutil.ShutdownHookThread;
+import org.slf4j.LoggerFactory;
+
+<span class="nc" id="L44">public class NamesrvStartup {</span>
+
+    private static InternalLogger log;
+<span class="nc" id="L47">    private static Properties properties = null;</span>
+<span class="nc" id="L48">    private static CommandLine commandLine = null;</span>
+
+    public static void main(String[] args) {
+<span class="nc" id="L51">        main0(args);</span>
+<span class="nc" id="L52">    }</span>
+
+    public static NamesrvController main0(String[] args) {
+
+        try {
+<span class="nc" id="L57">            NamesrvController controller = createNamesrvController(args);</span>
+<span class="nc" id="L58">            start(controller);</span>
+<span class="nc" id="L59">            String tip = &quot;The Name Server boot success. serializeType=&quot; + RemotingCommand.getSerializeTypeConfigInThisServer();</span>
+<span class="nc" id="L60">            log.info(tip);</span>
+<span class="nc" id="L61">            System.out.printf(&quot;%s%n&quot;, tip);</span>
+<span class="nc" id="L62">            return controller;</span>
+<span class="nc" id="L63">        } catch (Throwable e) {</span>
+<span class="nc" id="L64">            e.printStackTrace();</span>
+<span class="nc" id="L65">            System.exit(-1);</span>
+        }
+
+<span class="nc" id="L68">        return null;</span>
+    }
+
+    public static NamesrvController createNamesrvController(String[] args) throws IOException, JoranException {
+<span class="nc" id="L72">        System.setProperty(RemotingCommand.REMOTING_VERSION_KEY, Integer.toString(MQVersion.CURRENT_VERSION));</span>
+        //PackageConflictDetect.detectFastjson();
+
+<span class="nc" id="L75">        Options options = ServerUtil.buildCommandlineOptions(new Options());</span>
+<span class="nc" id="L76">        commandLine = ServerUtil.parseCmdLine(&quot;mqnamesrv&quot;, args, buildCommandlineOptions(options), new PosixParser());</span>
+<span class="nc bnc" id="L77" title="All 2 branches missed.">        if (null == commandLine) {</span>
+<span class="nc" id="L78">            System.exit(-1);</span>
+<span class="nc" id="L79">            return null;</span>
+        }
+
+<span class="nc" id="L82">        final NamesrvConfig namesrvConfig = new NamesrvConfig();</span>
+<span class="nc" id="L83">        final NettyServerConfig nettyServerConfig = new NettyServerConfig();</span>
+<span class="nc" id="L84">        nettyServerConfig.setListenPort(9876);</span>
+<span class="nc bnc" id="L85" title="All 2 branches missed.">        if (commandLine.hasOption('c')) {</span>
+<span class="nc" id="L86">            String file = commandLine.getOptionValue('c');</span>
+<span class="nc bnc" id="L87" title="All 2 branches missed.">            if (file != null) {</span>
+<span class="nc" id="L88">                InputStream in = new BufferedInputStream(new FileInputStream(file));</span>
+<span class="nc" id="L89">                properties = new Properties();</span>
+<span class="nc" id="L90">                properties.load(in);</span>
+<span class="nc" id="L91">                MixAll.properties2Object(properties, namesrvConfig);</span>
+<span class="nc" id="L92">                MixAll.properties2Object(properties, nettyServerConfig);</span>
+
+<span class="nc" id="L94">                namesrvConfig.setConfigStorePath(file);</span>
+
+<span class="nc" id="L96">                System.out.printf(&quot;load config properties file OK, %s%n&quot;, file);</span>
+<span class="nc" id="L97">                in.close();</span>
+            }
+        }
+
+<span class="nc bnc" id="L101" title="All 2 branches missed.">        if (commandLine.hasOption('p')) {</span>
+<span class="nc" id="L102">            InternalLogger console = InternalLoggerFactory.getLogger(LoggerName.NAMESRV_CONSOLE_NAME);</span>
+<span class="nc" id="L103">            MixAll.printObjectProperties(console, namesrvConfig);</span>
+<span class="nc" id="L104">            MixAll.printObjectProperties(console, nettyServerConfig);</span>
+<span class="nc" id="L105">            System.exit(0);</span>
+        }
+
+<span class="nc" id="L108">        MixAll.properties2Object(ServerUtil.commandLine2Properties(commandLine), namesrvConfig);</span>
+
+<span class="nc bnc" id="L110" title="All 2 branches missed.">        if (null == namesrvConfig.getRocketmqHome()) {</span>
+<span class="nc" id="L111">            System.out.printf(&quot;Please set the %s variable in your environment to match the location of the RocketMQ installation%n&quot;, MixAll.ROCKETMQ_HOME_ENV);</span>
+<span class="nc" id="L112">            System.exit(-2);</span>
+        }
+
+<span class="nc" id="L115">        LoggerContext lc = (LoggerContext) LoggerFactory.getILoggerFactory();</span>
+<span class="nc" id="L116">        JoranConfigurator configurator = new JoranConfigurator();</span>
+<span class="nc" id="L117">        configurator.setContext(lc);</span>
+<span class="nc" id="L118">        lc.reset();</span>
+<span class="nc" id="L119">        configurator.doConfigure(namesrvConfig.getRocketmqHome() + &quot;/conf/logback_namesrv.xml&quot;);</span>
+
+<span class="nc" id="L121">        log = InternalLoggerFactory.getLogger(LoggerName.NAMESRV_LOGGER_NAME);</span>
+
+<span class="nc" id="L123">        MixAll.printObjectProperties(log, namesrvConfig);</span>
+<span class="nc" id="L124">        MixAll.printObjectProperties(log, nettyServerConfig);</span>
+
+<span class="nc" id="L126">        final NamesrvController controller = new NamesrvController(namesrvConfig, nettyServerConfig);</span>
+
+        // remember all configs to prevent discard
+<span class="nc" id="L129">        controller.getConfiguration().registerConfig(properties);</span>
+
+<span class="nc" id="L131">        return controller;</span>
+    }
+
+    public static NamesrvController start(final NamesrvController controller) throws Exception {
+
+<span class="nc bnc" id="L136" title="All 2 branches missed.">        if (null == controller) {</span>
+<span class="nc" id="L137">            throw new IllegalArgumentException(&quot;NamesrvController is null&quot;);</span>
+        }
+
+<span class="nc" id="L140">        boolean initResult = controller.initialize();</span>
+<span class="nc bnc" id="L141" title="All 2 branches missed.">        if (!initResult) {</span>
+<span class="nc" id="L142">            controller.shutdown();</span>
+<span class="nc" id="L143">            System.exit(-3);</span>
+        }
+
+<span class="nc" id="L146">        Runtime.getRuntime().addShutdownHook(new ShutdownHookThread(log, new Callable&lt;Void&gt;() {</span>
+            @Override
+            public Void call() throws Exception {
+<span class="nc" id="L149">                controller.shutdown();</span>
+<span class="nc" id="L150">                return null;</span>
+            }
+        }));
+
+<span class="nc" id="L154">        controller.start();</span>
+
+<span class="nc" id="L156">        return controller;</span>
+    }
+
+    public static void shutdown(final NamesrvController controller) {
+<span class="nc" id="L160">        controller.shutdown();</span>
+<span class="nc" id="L161">    }</span>
+
+    public static Options buildCommandlineOptions(final Options options) {
+<span class="nc" id="L164">        Option opt = new Option(&quot;c&quot;, &quot;configFile&quot;, true, &quot;Name server config properties file&quot;);</span>
+<span class="nc" id="L165">        opt.setRequired(false);</span>
+<span class="nc" id="L166">        options.addOption(opt);</span>
+
+<span class="nc" id="L168">        opt = new Option(&quot;p&quot;, &quot;printConfigItem&quot;, false, &quot;Print all config item&quot;);</span>
+<span class="nc" id="L169">        opt.setRequired(false);</span>
+<span class="nc" id="L170">        options.addOption(opt);</span>
+
+<span class="nc" id="L172">        return options;</span>
+    }
+
+    public static Properties getProperties() {
+<span class="nc" id="L176">        return properties;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.5.201910111838</span></div></body></html>

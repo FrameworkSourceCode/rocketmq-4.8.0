@@ -1,0 +1,334 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AclUtils.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">rocketmq-acl 4.8.0</a> &gt; <a href="index.source.html" class="el_package">org.apache.rocketmq.acl.common</a> &gt; <span class="el_source">AclUtils.java</span></div><h1>AclUtils.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.rocketmq.acl.common;
+
+import com.alibaba.fastjson.JSONObject;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.io.PrintWriter;
+import java.util.ArrayList;
+import java.util.Map;
+import java.util.SortedMap;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.rocketmq.common.constant.LoggerName;
+import org.apache.rocketmq.logging.InternalLogger;
+import org.apache.rocketmq.logging.InternalLoggerFactory;
+import org.apache.rocketmq.remoting.RPCHook;
+import org.apache.rocketmq.remoting.protocol.RemotingCommand;
+import org.yaml.snakeyaml.Yaml;
+
+import static org.apache.rocketmq.acl.common.SessionCredentials.CHARSET;
+
+<span class="nc" id="L39">public class AclUtils {</span>
+
+<span class="fc" id="L41">    private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.COMMON_LOGGER_NAME);</span>
+
+    public static byte[] combineRequestContent(RemotingCommand request, SortedMap&lt;String, String&gt; fieldsMap) {
+        try {
+<span class="fc" id="L45">            StringBuilder sb = new StringBuilder(&quot;&quot;);</span>
+<span class="fc bfc" id="L46" title="All 2 branches covered.">            for (Map.Entry&lt;String, String&gt; entry : fieldsMap.entrySet()) {</span>
+<span class="pc bpc" id="L47" title="1 of 2 branches missed.">                if (!SessionCredentials.SIGNATURE.equals(entry.getKey())) {</span>
+<span class="fc" id="L48">                    sb.append(entry.getValue());</span>
+                }
+<span class="fc" id="L50">            }</span>
+
+<span class="fc" id="L52">            return AclUtils.combineBytes(sb.toString().getBytes(CHARSET), request.getBody());</span>
+<span class="nc" id="L53">        } catch (Exception e) {</span>
+<span class="nc" id="L54">            throw new RuntimeException(&quot;Incompatible exception.&quot;, e);</span>
+        }
+    }
+
+    public static byte[] combineBytes(byte[] b1, byte[] b2) {
+<span class="pc bpc" id="L59" title="1 of 4 branches missed.">        int size = (null != b1 ? b1.length : 0) + (null != b2 ? b2.length : 0);</span>
+<span class="fc" id="L60">        byte[] total = new byte[size];</span>
+<span class="pc bpc" id="L61" title="1 of 2 branches missed.">        if (null != b1)</span>
+<span class="fc" id="L62">            System.arraycopy(b1, 0, total, 0, b1.length);</span>
+<span class="fc bfc" id="L63" title="All 2 branches covered.">        if (null != b2)</span>
+<span class="fc" id="L64">            System.arraycopy(b2, 0, total, b1.length, b2.length);</span>
+<span class="fc" id="L65">        return total;</span>
+    }
+
+    public static String calSignature(byte[] data, String secretKey) {
+<span class="fc" id="L69">        String signature = AclSigner.calSignature(data, secretKey);</span>
+<span class="fc" id="L70">        return signature;</span>
+    }
+
+    public static void IPv6AddressCheck(String netaddress) {
+<span class="pc bpc" id="L74" title="1 of 4 branches missed.">        if (isAsterisk(netaddress) || isMinus(netaddress)) {</span>
+<span class="fc" id="L75">            int asterisk = netaddress.indexOf(&quot;*&quot;);</span>
+<span class="fc" id="L76">            int minus = netaddress.indexOf(&quot;-&quot;);</span>
+//            '*' must be the end of netaddress if it exists
+<span class="pc bpc" id="L78" title="1 of 4 branches missed.">            if (asterisk &gt; -1 &amp;&amp; asterisk != netaddress.length() - 1) {</span>
+<span class="nc" id="L79">                throw new AclException(String.format(&quot;Netaddress examine scope Exception netaddress is %s&quot;, netaddress));</span>
+            }
+
+//            format like &quot;2::ac5:78:1-200:*&quot; or &quot;2::ac5:78:1-200&quot; is legal
+<span class="fc bfc" id="L83" title="All 2 branches covered.">            if (minus &gt; -1) {</span>
+<span class="fc bfc" id="L84" title="All 2 branches covered.">                if (asterisk == -1) {</span>
+<span class="pc bpc" id="L85" title="1 of 2 branches missed.">                    if (minus &lt;= netaddress.lastIndexOf(&quot;:&quot;)) {</span>
+<span class="nc" id="L86">                        throw new AclException(String.format(&quot;Netaddress examine scope Exception netaddress is %s&quot;, netaddress));</span>
+                    }
+                } else {
+<span class="pc bpc" id="L89" title="1 of 2 branches missed.">                    if (minus &lt;= netaddress.lastIndexOf(&quot;:&quot;, netaddress.lastIndexOf(&quot;:&quot;) - 1)) {</span>
+<span class="nc" id="L90">                        throw new AclException(String.format(&quot;Netaddress examine scope Exception netaddress is %s&quot;, netaddress));</span>
+                    }
+                }
+            }
+        }
+<span class="fc" id="L95">    }</span>
+
+    public static String v6ipProcess(String netaddress) {
+        int part;
+        String subAddress;
+<span class="fc" id="L100">        boolean isAsterisk = isAsterisk(netaddress);</span>
+<span class="fc" id="L101">        boolean isMinus = isMinus(netaddress);</span>
+<span class="fc bfc" id="L102" title="All 4 branches covered.">        if (isAsterisk &amp;&amp; isMinus) {</span>
+<span class="fc" id="L103">            part = 6;</span>
+<span class="fc" id="L104">            int lastColon = netaddress.lastIndexOf(':');</span>
+<span class="fc" id="L105">            int secondLastColon = netaddress.substring(0, lastColon).lastIndexOf(':');</span>
+<span class="fc" id="L106">            subAddress = netaddress.substring(0, secondLastColon);</span>
+<span class="pc bpc" id="L107" title="1 of 4 branches missed.">        } else if (!isAsterisk &amp;&amp; !isMinus) {</span>
+<span class="nc" id="L108">            part = 8;</span>
+<span class="nc" id="L109">            subAddress = netaddress;</span>
+        } else {
+<span class="fc" id="L111">            part = 7;</span>
+<span class="fc" id="L112">            subAddress = netaddress.substring(0, netaddress.lastIndexOf(':'));</span>
+        }
+<span class="fc" id="L114">        return expandIP(subAddress, part);</span>
+    }
+
+    public static void verify(String netaddress, int index) {
+<span class="pc bpc" id="L118" title="1 of 2 branches missed.">        if (!AclUtils.isScope(netaddress, index)) {</span>
+<span class="nc" id="L119">            throw new AclException(String.format(&quot;Netaddress examine scope Exception netaddress is %s&quot;, netaddress));</span>
+        }
+<span class="fc" id="L121">    }</span>
+
+    public static String[] getAddresses(String netaddress, String partialAddress) {
+<span class="fc" id="L124">        String[] parAddStrArray = StringUtils.split(partialAddress.substring(1, partialAddress.length() - 1), &quot;,&quot;);</span>
+<span class="fc" id="L125">        String address = netaddress.substring(0, netaddress.indexOf(&quot;{&quot;));</span>
+<span class="fc" id="L126">        String[] addreeStrArray = new String[parAddStrArray.length];</span>
+<span class="fc bfc" id="L127" title="All 2 branches covered.">        for (int i = 0; i &lt; parAddStrArray.length; i++) {</span>
+<span class="fc" id="L128">            addreeStrArray[i] = address + parAddStrArray[i];</span>
+        }
+<span class="fc" id="L130">        return addreeStrArray;</span>
+    }
+
+    public static boolean isScope(String netaddress, int index) {
+//        IPv6 Address
+<span class="fc bfc" id="L135" title="All 2 branches covered.">        if (isColon(netaddress)) {</span>
+<span class="fc" id="L136">            netaddress = expandIP(netaddress, 8);</span>
+<span class="fc" id="L137">            String[] strArray = StringUtils.split(netaddress, &quot;:&quot;);</span>
+<span class="fc" id="L138">            return isIPv6Scope(strArray, index);</span>
+        }
+
+<span class="fc" id="L141">        String[] strArray = StringUtils.split(netaddress, &quot;.&quot;);</span>
+<span class="fc bfc" id="L142" title="All 2 branches covered.">        if (strArray.length != 4) {</span>
+<span class="fc" id="L143">            return false;</span>
+        }
+<span class="fc" id="L145">        return isScope(strArray, index);</span>
+
+    }
+
+    public static boolean isScope(String[] num, int index) {
+<span class="fc bfc" id="L150" title="All 2 branches covered.">        if (num.length &lt;= index) {</span>
+
+        }
+<span class="fc bfc" id="L153" title="All 2 branches covered.">        for (int i = 0; i &lt; index; i++) {</span>
+<span class="fc bfc" id="L154" title="All 2 branches covered.">            if (!isScope(num[i])) {</span>
+<span class="fc" id="L155">                return false;</span>
+            }
+        }
+<span class="fc" id="L158">        return true;</span>
+
+    }
+
+    public static boolean isColon(String netaddress) {
+<span class="fc bfc" id="L163" title="All 2 branches covered.">        return netaddress.indexOf(':') &gt; -1;</span>
+    }
+
+    public static boolean isScope(String num) {
+<span class="fc" id="L167">        return isScope(Integer.valueOf(num.trim()));</span>
+    }
+
+    public static boolean isScope(int num) {
+<span class="fc bfc" id="L171" title="All 4 branches covered.">        return num &gt;= 0 &amp;&amp; num &lt;= 255;</span>
+    }
+
+    public static boolean isAsterisk(String asterisk) {
+<span class="fc bfc" id="L175" title="All 2 branches covered.">        return asterisk.indexOf('*') &gt; -1;</span>
+    }
+
+    public static boolean isComma(String colon) {
+<span class="fc bfc" id="L179" title="All 2 branches covered.">        return colon.indexOf(',') &gt; -1;</span>
+    }
+
+    public static boolean isMinus(String minus) {
+<span class="fc bfc" id="L183" title="All 2 branches covered.">        return minus.indexOf('-') &gt; -1;</span>
+
+    }
+
+    public static boolean isIPv6Scope(String[] num, int index) {
+<span class="fc bfc" id="L188" title="All 2 branches covered.">        for (int i = 0; i &lt; index; i++) {</span>
+            int value;
+            try {
+<span class="fc" id="L191">                value = Integer.parseInt(num[i], 16);</span>
+<span class="fc" id="L192">            } catch (NumberFormatException e) {</span>
+<span class="fc" id="L193">                return false;</span>
+<span class="fc" id="L194">            }</span>
+<span class="pc bpc" id="L195" title="1 of 2 branches missed.">            if (!isIPv6Scope(value)) {</span>
+<span class="nc" id="L196">                return false;</span>
+            }
+        }
+<span class="fc" id="L199">        return true;</span>
+    }
+
+    public static boolean isIPv6Scope(int num) {
+<span class="fc" id="L203">        int min = Integer.parseInt(&quot;0&quot;, 16);</span>
+<span class="fc" id="L204">        int max = Integer.parseInt(&quot;ffff&quot;, 16);</span>
+<span class="fc bfc" id="L205" title="All 4 branches covered.">        return num &gt;= min &amp;&amp; num &lt;= max;</span>
+    }
+
+    public static String expandIP(String netaddress, int part) {
+<span class="fc" id="L209">        boolean compress = false;</span>
+<span class="fc" id="L210">        int compressIndex = -1;</span>
+<span class="fc" id="L211">        String[] strArray = StringUtils.split(netaddress, &quot;:&quot;);</span>
+<span class="fc" id="L212">        ArrayList&lt;Integer&gt; indexes = new ArrayList&lt;&gt;();</span>
+<span class="fc bfc" id="L213" title="All 2 branches covered.">        for (int i = 0; i &lt; netaddress.length(); i++) {</span>
+<span class="fc bfc" id="L214" title="All 2 branches covered.">            if (netaddress.charAt(i) == ':') {</span>
+<span class="fc bfc" id="L215" title="All 4 branches covered.">                if (indexes.size() &gt; 0 &amp;&amp; i - indexes.get(indexes.size() - 1) == 1) {</span>
+<span class="fc" id="L216">                    compressIndex = i;</span>
+<span class="fc" id="L217">                    compress = true;</span>
+                }
+<span class="fc" id="L219">                indexes.add(i);</span>
+            }
+        }
+
+<span class="fc bfc" id="L223" title="All 2 branches covered.">        for (int i = 0; i &lt; strArray.length; i++) {</span>
+<span class="fc bfc" id="L224" title="All 2 branches covered.">            if (strArray[i].length() &lt; 4) {</span>
+<span class="fc" id="L225">                strArray[i] = &quot;0000&quot;.substring(0, 4 - strArray[i].length()) + strArray[i];</span>
+            }
+        }
+
+<span class="fc" id="L229">        StringBuilder sb = new StringBuilder();</span>
+<span class="fc bfc" id="L230" title="All 2 branches covered.">        if (compress) {</span>
+<span class="fc" id="L231">            int pos = indexes.indexOf(compressIndex);</span>
+<span class="fc" id="L232">            int index = 0;</span>
+<span class="fc bfc" id="L233" title="All 2 branches covered.">            if (!netaddress.startsWith(&quot;:&quot;)) {</span>
+<span class="fc bfc" id="L234" title="All 2 branches covered.">                for (int i = 0; i &lt; pos; i++) {</span>
+<span class="fc" id="L235">                    sb.append(strArray[index]).append(&quot;:&quot;);</span>
+<span class="fc" id="L236">                    index += 1;</span>
+                }
+            }
+<span class="fc" id="L239">            int zeroNum = part - strArray.length;</span>
+<span class="fc bfc" id="L240" title="All 2 branches covered.">            if (netaddress.endsWith(&quot;:&quot;)) {</span>
+<span class="fc bfc" id="L241" title="All 2 branches covered.">                for (int i = 0; i &lt; zeroNum; i++) {</span>
+<span class="fc" id="L242">                    sb.append(&quot;0000&quot;);</span>
+<span class="fc bfc" id="L243" title="All 2 branches covered.">                    if (i != zeroNum - 1) {</span>
+<span class="fc" id="L244">                        sb.append(&quot;:&quot;);</span>
+                    }
+                }
+            } else {
+<span class="fc bfc" id="L248" title="All 2 branches covered.">                for (int i = 0; i &lt; zeroNum; i++) {</span>
+<span class="fc" id="L249">                    sb.append(&quot;0000&quot;).append(&quot;:&quot;);</span>
+                }
+<span class="fc bfc" id="L251" title="All 2 branches covered.">                for (int i = index; i &lt; strArray.length; i++) {</span>
+<span class="fc" id="L252">                    sb.append(strArray[i]);</span>
+<span class="fc bfc" id="L253" title="All 2 branches covered.">                    if (i != strArray.length - 1) {</span>
+<span class="fc" id="L254">                        sb.append(&quot;:&quot;);</span>
+                    }
+                }
+            }
+<span class="fc" id="L258">        } else {</span>
+<span class="fc bfc" id="L259" title="All 2 branches covered.">            for (int i = 0; i &lt; strArray.length; i++) {</span>
+<span class="fc" id="L260">                sb.append(strArray[i]);</span>
+<span class="fc bfc" id="L261" title="All 2 branches covered.">                if (i != strArray.length - 1) {</span>
+<span class="fc" id="L262">                    sb.append(&quot;:&quot;);</span>
+                }
+            }
+        }
+<span class="fc" id="L266">        return sb.toString().toUpperCase();</span>
+    }
+
+    public static &lt;T&gt; T getYamlDataObject(String path, Class&lt;T&gt; clazz) {
+<span class="fc" id="L270">        Yaml yaml = new Yaml();</span>
+<span class="fc" id="L271">        FileInputStream fis = null;</span>
+        try {
+<span class="fc" id="L273">            fis = new FileInputStream(new File(path));</span>
+<span class="fc" id="L274">            return yaml.loadAs(fis, clazz);</span>
+<span class="fc" id="L275">        } catch (FileNotFoundException ignore) {</span>
+<span class="fc" id="L276">            return null;</span>
+<span class="fc" id="L277">        } catch (Exception e) {</span>
+<span class="fc" id="L278">            throw new AclException(e.getMessage());</span>
+        } finally {
+<span class="fc bfc" id="L280" title="All 2 branches covered.">            if (fis != null) {</span>
+                try {
+<span class="fc" id="L282">                    fis.close();</span>
+<span class="nc" id="L283">                } catch (IOException ignore) {</span>
+<span class="fc" id="L284">                }</span>
+            }
+        }
+    }
+
+    public static boolean writeDataObject(String path, Map&lt;String, Object&gt; dataMap) {
+<span class="fc" id="L290">        Yaml yaml = new Yaml();</span>
+<span class="fc" id="L291">        PrintWriter pw = null;</span>
+        try {
+<span class="fc" id="L293">            pw = new PrintWriter(new FileWriter(path));</span>
+<span class="fc" id="L294">            String dumpAsMap = yaml.dumpAsMap(dataMap);</span>
+<span class="fc" id="L295">            pw.print(dumpAsMap);</span>
+<span class="fc" id="L296">            pw.flush();</span>
+<span class="nc" id="L297">        } catch (Exception e) {</span>
+<span class="nc" id="L298">            throw new AclException(e.getMessage());</span>
+        } finally {
+<span class="pc bpc" id="L300" title="1 of 2 branches missed.">            if (pw != null) {</span>
+<span class="fc" id="L301">                pw.close();</span>
+            }
+        }
+<span class="fc" id="L304">        return true;</span>
+    }
+
+    public static RPCHook getAclRPCHook(String fileName) {
+<span class="fc" id="L308">        JSONObject yamlDataObject = null;</span>
+        try {
+<span class="fc" id="L310">            yamlDataObject = AclUtils.getYamlDataObject(fileName,</span>
+                JSONObject.class);
+<span class="fc" id="L312">        } catch (Exception e) {</span>
+<span class="fc" id="L313">            log.error(&quot;Convert yaml file to data object error, &quot;, e);</span>
+<span class="fc" id="L314">            return null;</span>
+<span class="fc" id="L315">        }</span>
+
+<span class="pc bpc" id="L317" title="1 of 4 branches missed.">        if (yamlDataObject == null || yamlDataObject.isEmpty()) {</span>
+<span class="fc" id="L318">            log.warn(&quot;Cannot find conf file :{}, acl isn't be enabled.&quot;, fileName);</span>
+<span class="fc" id="L319">            return null;</span>
+        }
+
+<span class="fc" id="L322">        String accessKey = yamlDataObject.getString(AclConstants.CONFIG_ACCESS_KEY);</span>
+<span class="fc" id="L323">        String secretKey = yamlDataObject.getString(AclConstants.CONFIG_SECRET_KEY);</span>
+
+<span class="pc bpc" id="L325" title="2 of 4 branches missed.">        if (StringUtils.isBlank(accessKey) || StringUtils.isBlank(secretKey)) {</span>
+<span class="fc" id="L326">            log.warn(&quot;AccessKey or secretKey is blank, the acl is not enabled.&quot;);</span>
+
+<span class="fc" id="L328">            return null;</span>
+        }
+<span class="nc" id="L330">        return new AclClientRPCHook(new SessionCredentials(accessKey, secretKey));</span>
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.5.201910111838</span></div></body></html>

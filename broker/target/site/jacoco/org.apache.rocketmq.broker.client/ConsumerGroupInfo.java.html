@@ -1,0 +1,249 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ConsumerGroupInfo.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">rocketmq-broker 4.8.0</a> &gt; <a href="index.source.html" class="el_package">org.apache.rocketmq.broker.client</a> &gt; <span class="el_source">ConsumerGroupInfo.java</span></div><h1>ConsumerGroupInfo.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.rocketmq.broker.client;
+
+import io.netty.channel.Channel;
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map.Entry;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import org.apache.rocketmq.common.constant.LoggerName;
+import org.apache.rocketmq.common.consumer.ConsumeFromWhere;
+import org.apache.rocketmq.logging.InternalLogger;
+import org.apache.rocketmq.logging.InternalLoggerFactory;
+import org.apache.rocketmq.common.protocol.heartbeat.ConsumeType;
+import org.apache.rocketmq.common.protocol.heartbeat.MessageModel;
+import org.apache.rocketmq.common.protocol.heartbeat.SubscriptionData;
+
+public class ConsumerGroupInfo {
+<span class="fc" id="L36">    private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.BROKER_LOGGER_NAME);</span>
+    private final String groupName;
+<span class="fc" id="L38">    private final ConcurrentMap&lt;String/* Topic */, SubscriptionData&gt; subscriptionTable =</span>
+        new ConcurrentHashMap&lt;String, SubscriptionData&gt;();
+<span class="fc" id="L40">    private final ConcurrentMap&lt;Channel, ClientChannelInfo&gt; channelInfoTable =</span>
+        new ConcurrentHashMap&lt;Channel, ClientChannelInfo&gt;(16);
+    private volatile ConsumeType consumeType;
+    private volatile MessageModel messageModel;
+    private volatile ConsumeFromWhere consumeFromWhere;
+<span class="fc" id="L45">    private volatile long lastUpdateTimestamp = System.currentTimeMillis();</span>
+
+    public ConsumerGroupInfo(String groupName, ConsumeType consumeType, MessageModel messageModel,
+<span class="fc" id="L48">        ConsumeFromWhere consumeFromWhere) {</span>
+<span class="fc" id="L49">        this.groupName = groupName;</span>
+<span class="fc" id="L50">        this.consumeType = consumeType;</span>
+<span class="fc" id="L51">        this.messageModel = messageModel;</span>
+<span class="fc" id="L52">        this.consumeFromWhere = consumeFromWhere;</span>
+<span class="fc" id="L53">    }</span>
+
+    public ClientChannelInfo findChannel(final String clientId) {
+<span class="nc" id="L56">        Iterator&lt;Entry&lt;Channel, ClientChannelInfo&gt;&gt; it = this.channelInfoTable.entrySet().iterator();</span>
+<span class="nc bnc" id="L57" title="All 2 branches missed.">        while (it.hasNext()) {</span>
+<span class="nc" id="L58">            Entry&lt;Channel, ClientChannelInfo&gt; next = it.next();</span>
+<span class="nc bnc" id="L59" title="All 2 branches missed.">            if (next.getValue().getClientId().equals(clientId)) {</span>
+<span class="nc" id="L60">                return next.getValue();</span>
+            }
+<span class="nc" id="L62">        }</span>
+
+<span class="nc" id="L64">        return null;</span>
+    }
+
+    public ConcurrentMap&lt;String, SubscriptionData&gt; getSubscriptionTable() {
+<span class="nc" id="L68">        return subscriptionTable;</span>
+    }
+
+    public ConcurrentMap&lt;Channel, ClientChannelInfo&gt; getChannelInfoTable() {
+<span class="fc" id="L72">        return channelInfoTable;</span>
+    }
+
+    public List&lt;Channel&gt; getAllChannel() {
+<span class="fc" id="L76">        List&lt;Channel&gt; result = new ArrayList&lt;&gt;();</span>
+
+<span class="fc" id="L78">        result.addAll(this.channelInfoTable.keySet());</span>
+
+<span class="fc" id="L80">        return result;</span>
+    }
+
+    public List&lt;String&gt; getAllClientId() {
+<span class="nc" id="L84">        List&lt;String&gt; result = new ArrayList&lt;&gt;();</span>
+
+<span class="nc" id="L86">        Iterator&lt;Entry&lt;Channel, ClientChannelInfo&gt;&gt; it = this.channelInfoTable.entrySet().iterator();</span>
+
+<span class="nc bnc" id="L88" title="All 2 branches missed.">        while (it.hasNext()) {</span>
+<span class="nc" id="L89">            Entry&lt;Channel, ClientChannelInfo&gt; entry = it.next();</span>
+<span class="nc" id="L90">            ClientChannelInfo clientChannelInfo = entry.getValue();</span>
+<span class="nc" id="L91">            result.add(clientChannelInfo.getClientId());</span>
+<span class="nc" id="L92">        }</span>
+
+<span class="nc" id="L94">        return result;</span>
+    }
+
+    public void unregisterChannel(final ClientChannelInfo clientChannelInfo) {
+<span class="fc" id="L98">        ClientChannelInfo old = this.channelInfoTable.remove(clientChannelInfo.getChannel());</span>
+<span class="pc bpc" id="L99" title="1 of 2 branches missed.">        if (old != null) {</span>
+<span class="fc" id="L100">            log.info(&quot;unregister a consumer[{}] from consumerGroupInfo {}&quot;, this.groupName, old.toString());</span>
+        }
+<span class="fc" id="L102">    }</span>
+
+    public boolean doChannelCloseEvent(final String remoteAddr, final Channel channel) {
+<span class="nc" id="L105">        final ClientChannelInfo info = this.channelInfoTable.remove(channel);</span>
+<span class="nc bnc" id="L106" title="All 2 branches missed.">        if (info != null) {</span>
+<span class="nc" id="L107">            log.warn(</span>
+                &quot;NETTY EVENT: remove not active channel[{}] from ConsumerGroupInfo groupChannelTable, consumer group: {}&quot;,
+<span class="nc" id="L109">                info.toString(), groupName);</span>
+<span class="nc" id="L110">            return true;</span>
+        }
+
+<span class="nc" id="L113">        return false;</span>
+    }
+
+    public boolean updateChannel(final ClientChannelInfo infoNew, ConsumeType consumeType,
+        MessageModel messageModel, ConsumeFromWhere consumeFromWhere) {
+<span class="fc" id="L118">        boolean updated = false;</span>
+<span class="fc" id="L119">        this.consumeType = consumeType;</span>
+<span class="fc" id="L120">        this.messageModel = messageModel;</span>
+<span class="fc" id="L121">        this.consumeFromWhere = consumeFromWhere;</span>
+
+<span class="fc" id="L123">        ClientChannelInfo infoOld = this.channelInfoTable.get(infoNew.getChannel());</span>
+<span class="pc bpc" id="L124" title="1 of 2 branches missed.">        if (null == infoOld) {</span>
+<span class="fc" id="L125">            ClientChannelInfo prev = this.channelInfoTable.put(infoNew.getChannel(), infoNew);</span>
+<span class="pc bpc" id="L126" title="1 of 2 branches missed.">            if (null == prev) {</span>
+<span class="fc" id="L127">                log.info(&quot;new consumer connected, group: {} {} {} channel: {}&quot;, this.groupName, consumeType,</span>
+<span class="fc" id="L128">                    messageModel, infoNew.toString());</span>
+<span class="fc" id="L129">                updated = true;</span>
+            }
+
+<span class="fc" id="L132">            infoOld = infoNew;</span>
+<span class="fc" id="L133">        } else {</span>
+<span class="nc bnc" id="L134" title="All 2 branches missed.">            if (!infoOld.getClientId().equals(infoNew.getClientId())) {</span>
+<span class="nc" id="L135">                log.error(&quot;[BUG] consumer channel exist in broker, but clientId not equal. GROUP: {} OLD: {} NEW: {} &quot;,</span>
+                    this.groupName,
+<span class="nc" id="L137">                    infoOld.toString(),</span>
+<span class="nc" id="L138">                    infoNew.toString());</span>
+<span class="nc" id="L139">                this.channelInfoTable.put(infoNew.getChannel(), infoNew);</span>
+            }
+        }
+
+<span class="fc" id="L143">        this.lastUpdateTimestamp = System.currentTimeMillis();</span>
+<span class="fc" id="L144">        infoOld.setLastUpdateTimestamp(this.lastUpdateTimestamp);</span>
+
+<span class="fc" id="L146">        return updated;</span>
+    }
+
+    public boolean updateSubscription(final Set&lt;SubscriptionData&gt; subList) {
+<span class="fc" id="L150">        boolean updated = false;</span>
+
+<span class="fc bfc" id="L152" title="All 2 branches covered.">        for (SubscriptionData sub : subList) {</span>
+<span class="fc" id="L153">            SubscriptionData old = this.subscriptionTable.get(sub.getTopic());</span>
+<span class="pc bpc" id="L154" title="1 of 2 branches missed.">            if (old == null) {</span>
+<span class="fc" id="L155">                SubscriptionData prev = this.subscriptionTable.putIfAbsent(sub.getTopic(), sub);</span>
+<span class="pc bpc" id="L156" title="1 of 2 branches missed.">                if (null == prev) {</span>
+<span class="fc" id="L157">                    updated = true;</span>
+<span class="fc" id="L158">                    log.info(&quot;subscription changed, add new topic, group: {} {}&quot;,</span>
+                        this.groupName,
+<span class="fc" id="L160">                        sub.toString());</span>
+                }
+<span class="pc bnc" id="L162" title="All 2 branches missed.">            } else if (sub.getSubVersion() &gt; old.getSubVersion()) {</span>
+<span class="nc bnc" id="L163" title="All 2 branches missed.">                if (this.consumeType == ConsumeType.CONSUME_PASSIVELY) {</span>
+<span class="nc" id="L164">                    log.info(&quot;subscription changed, group: {} OLD: {} NEW: {}&quot;,</span>
+                        this.groupName,
+<span class="nc" id="L166">                        old.toString(),</span>
+<span class="nc" id="L167">                        sub.toString()</span>
+                    );
+                }
+
+<span class="nc" id="L171">                this.subscriptionTable.put(sub.getTopic(), sub);</span>
+            }
+<span class="fc" id="L173">        }</span>
+
+<span class="fc" id="L175">        Iterator&lt;Entry&lt;String, SubscriptionData&gt;&gt; it = this.subscriptionTable.entrySet().iterator();</span>
+<span class="fc bfc" id="L176" title="All 2 branches covered.">        while (it.hasNext()) {</span>
+<span class="fc" id="L177">            Entry&lt;String, SubscriptionData&gt; next = it.next();</span>
+<span class="fc" id="L178">            String oldTopic = next.getKey();</span>
+
+<span class="fc" id="L180">            boolean exist = false;</span>
+<span class="pc bpc" id="L181" title="1 of 2 branches missed.">            for (SubscriptionData sub : subList) {</span>
+<span class="pc bpc" id="L182" title="1 of 2 branches missed.">                if (sub.getTopic().equals(oldTopic)) {</span>
+<span class="fc" id="L183">                    exist = true;</span>
+<span class="fc" id="L184">                    break;</span>
+                }
+<span class="nc" id="L186">            }</span>
+
+<span class="pc bpc" id="L188" title="1 of 2 branches missed.">            if (!exist) {</span>
+<span class="nc" id="L189">                log.warn(&quot;subscription changed, group: {} remove topic {} {}&quot;,</span>
+                    this.groupName,
+                    oldTopic,
+<span class="nc" id="L192">                    next.getValue().toString()</span>
+                );
+
+<span class="nc" id="L195">                it.remove();</span>
+<span class="nc" id="L196">                updated = true;</span>
+            }
+<span class="fc" id="L198">        }</span>
+
+<span class="fc" id="L200">        this.lastUpdateTimestamp = System.currentTimeMillis();</span>
+
+<span class="fc" id="L202">        return updated;</span>
+    }
+
+    public Set&lt;String&gt; getSubscribeTopics() {
+<span class="nc" id="L206">        return subscriptionTable.keySet();</span>
+    }
+
+    public SubscriptionData findSubscriptionData(final String topic) {
+<span class="fc" id="L210">        return this.subscriptionTable.get(topic);</span>
+    }
+
+    public ConsumeType getConsumeType() {
+<span class="nc" id="L214">        return consumeType;</span>
+    }
+
+    public void setConsumeType(ConsumeType consumeType) {
+<span class="nc" id="L218">        this.consumeType = consumeType;</span>
+<span class="nc" id="L219">    }</span>
+
+    public MessageModel getMessageModel() {
+<span class="nc" id="L222">        return messageModel;</span>
+    }
+
+    public void setMessageModel(MessageModel messageModel) {
+<span class="nc" id="L226">        this.messageModel = messageModel;</span>
+<span class="nc" id="L227">    }</span>
+
+    public String getGroupName() {
+<span class="nc" id="L230">        return groupName;</span>
+    }
+
+    public long getLastUpdateTimestamp() {
+<span class="nc" id="L234">        return lastUpdateTimestamp;</span>
+    }
+
+    public void setLastUpdateTimestamp(long lastUpdateTimestamp) {
+<span class="nc" id="L238">        this.lastUpdateTimestamp = lastUpdateTimestamp;</span>
+<span class="nc" id="L239">    }</span>
+
+    public ConsumeFromWhere getConsumeFromWhere() {
+<span class="nc" id="L242">        return consumeFromWhere;</span>
+    }
+
+    public void setConsumeFromWhere(ConsumeFromWhere consumeFromWhere) {
+<span class="nc" id="L246">        this.consumeFromWhere = consumeFromWhere;</span>
+<span class="nc" id="L247">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.5.201910111838</span></div></body></html>

@@ -1,0 +1,17 @@
+#Wed Jul 07 11:08:43 CST 2021
+/Users/yangweixing/Desktop/github_open/rocketmq-all-4.8.0-source-release/acl/src/main/java/org/apache/rocketmq/acl/AccessValidator.java=1607422609000
+/Users/yangweixing/Desktop/github_open/rocketmq-all-4.8.0-source-release/acl/src/main/java/org/apache/rocketmq/acl/AccessResource.java=1607422609000
+/Users/yangweixing/Desktop/github_open/rocketmq-all-4.8.0-source-release/acl/src/main/java/org/apache/rocketmq/acl/common/AclException.java=1607422609000
+/Users/yangweixing/Desktop/github_open/rocketmq-all-4.8.0-source-release/acl/src/main/java/org/apache/rocketmq/acl/common/AclUtils.java=1607422609000
+/Users/yangweixing/Desktop/github_open/rocketmq-all-4.8.0-source-release/acl/src/main/java/org/apache/rocketmq/acl/plain/PlainAccessResource.java=1607422609000
+/Users/yangweixing/Desktop/github_open/rocketmq-all-4.8.0-source-release/acl/src/main/java/org/apache/rocketmq/acl/common/SigningAlgorithm.java=1607422609000
+/Users/yangweixing/Desktop/github_open/rocketmq-all-4.8.0-source-release/acl/src/main/java/org/apache/rocketmq/acl/common/AclConstants.java=1607422609000
+/Users/yangweixing/Desktop/github_open/rocketmq-all-4.8.0-source-release/acl/src/main/java/org/apache/rocketmq/acl/common/Permission.java=1607422609000
+/Users/yangweixing/Desktop/github_open/rocketmq-all-4.8.0-source-release/acl/src/main/java/org/apache/rocketmq/acl/common/SessionCredentials.java=1607422609000
+/Users/yangweixing/Desktop/github_open/rocketmq-all-4.8.0-source-release/acl/src/main/java/org/apache/rocketmq/acl/plain/PlainAccessValidator.java=1607422609000
+/Users/yangweixing/Desktop/github_open/rocketmq-all-4.8.0-source-release/acl/src/main/java/org/apache/rocketmq/acl/common/AclClientRPCHook.java=1607422609000
+/Users/yangweixing/Desktop/github_open/rocketmq-all-4.8.0-source-release/acl/src/main/java/org/apache/rocketmq/acl/plain/PlainPermissionManager.java=1607422609000
+configuration*?=AEDC8390DD0B27ED245BE1415499ABD049DB3200
+/Users/yangweixing/Desktop/github_open/rocketmq-all-4.8.0-source-release/acl/src/main/java/org/apache/rocketmq/acl/common/AclSigner.java=1607422609000
+/Users/yangweixing/Desktop/github_open/rocketmq-all-4.8.0-source-release/acl/src/main/java/org/apache/rocketmq/acl/plain/RemoteAddressStrategy.java=1607422609000
+/Users/yangweixing/Desktop/github_open/rocketmq-all-4.8.0-source-release/acl/src/main/java/org/apache/rocketmq/acl/plain/RemoteAddressStrategyFactory.java=1607422609000

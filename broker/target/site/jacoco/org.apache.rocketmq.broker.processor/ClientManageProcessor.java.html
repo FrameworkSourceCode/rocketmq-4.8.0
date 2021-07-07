@@ -1,0 +1,206 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ClientManageProcessor.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">rocketmq-broker 4.8.0</a> &gt; <a href="index.source.html" class="el_package">org.apache.rocketmq.broker.processor</a> &gt; <span class="el_source">ClientManageProcessor.java</span></div><h1>ClientManageProcessor.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.rocketmq.broker.processor;
+
+import io.netty.channel.ChannelHandlerContext;
+import org.apache.rocketmq.broker.BrokerController;
+import org.apache.rocketmq.broker.client.ClientChannelInfo;
+import org.apache.rocketmq.common.MixAll;
+import org.apache.rocketmq.common.constant.LoggerName;
+import org.apache.rocketmq.common.constant.PermName;
+import org.apache.rocketmq.common.filter.ExpressionType;
+import org.apache.rocketmq.common.protocol.RequestCode;
+import org.apache.rocketmq.common.protocol.ResponseCode;
+import org.apache.rocketmq.common.protocol.body.CheckClientRequestBody;
+import org.apache.rocketmq.common.protocol.header.UnregisterClientRequestHeader;
+import org.apache.rocketmq.common.protocol.header.UnregisterClientResponseHeader;
+import org.apache.rocketmq.common.protocol.heartbeat.ConsumerData;
+import org.apache.rocketmq.common.protocol.heartbeat.HeartbeatData;
+import org.apache.rocketmq.common.protocol.heartbeat.ProducerData;
+import org.apache.rocketmq.common.protocol.heartbeat.SubscriptionData;
+import org.apache.rocketmq.common.subscription.SubscriptionGroupConfig;
+import org.apache.rocketmq.common.sysflag.TopicSysFlag;
+import org.apache.rocketmq.filter.FilterFactory;
+import org.apache.rocketmq.logging.InternalLogger;
+import org.apache.rocketmq.logging.InternalLoggerFactory;
+import org.apache.rocketmq.remoting.common.RemotingHelper;
+import org.apache.rocketmq.remoting.exception.RemotingCommandException;
+import org.apache.rocketmq.remoting.netty.NettyRequestProcessor;
+import org.apache.rocketmq.remoting.netty.AsyncNettyRequestProcessor;
+import org.apache.rocketmq.remoting.protocol.RemotingCommand;
+
+public class ClientManageProcessor extends AsyncNettyRequestProcessor implements NettyRequestProcessor {
+<span class="fc" id="L47">    private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.BROKER_LOGGER_NAME);</span>
+    private final BrokerController brokerController;
+
+<span class="fc" id="L50">    public ClientManageProcessor(final BrokerController brokerController) {</span>
+<span class="fc" id="L51">        this.brokerController = brokerController;</span>
+<span class="fc" id="L52">    }</span>
+
+    @Override
+    public RemotingCommand processRequest(ChannelHandlerContext ctx, RemotingCommand request)
+        throws RemotingCommandException {
+<span class="pc bpc" id="L57" title="3 of 4 branches missed.">        switch (request.getCode()) {</span>
+            case RequestCode.HEART_BEAT:
+<span class="nc" id="L59">                return this.heartBeat(ctx, request);</span>
+            case RequestCode.UNREGISTER_CLIENT:
+<span class="fc" id="L61">                return this.unregisterClient(ctx, request);</span>
+            case RequestCode.CHECK_CLIENT_CONFIG:
+<span class="nc" id="L63">                return this.checkClientConfig(ctx, request);</span>
+            default:
+                break;
+        }
+<span class="nc" id="L67">        return null;</span>
+    }
+
+    @Override
+    public boolean rejectRequest() {
+<span class="nc" id="L72">        return false;</span>
+    }
+
+    public RemotingCommand heartBeat(ChannelHandlerContext ctx, RemotingCommand request) {
+<span class="nc" id="L76">        RemotingCommand response = RemotingCommand.createResponseCommand(null);</span>
+<span class="nc" id="L77">        HeartbeatData heartbeatData = HeartbeatData.decode(request.getBody(), HeartbeatData.class);</span>
+<span class="nc" id="L78">        ClientChannelInfo clientChannelInfo = new ClientChannelInfo(</span>
+<span class="nc" id="L79">            ctx.channel(),</span>
+<span class="nc" id="L80">            heartbeatData.getClientID(),</span>
+<span class="nc" id="L81">            request.getLanguage(),</span>
+<span class="nc" id="L82">            request.getVersion()</span>
+        );
+
+<span class="nc bnc" id="L85" title="All 2 branches missed.">        for (ConsumerData data : heartbeatData.getConsumerDataSet()) {</span>
+<span class="nc" id="L86">            SubscriptionGroupConfig subscriptionGroupConfig =</span>
+<span class="nc" id="L87">                this.brokerController.getSubscriptionGroupManager().findSubscriptionGroupConfig(</span>
+<span class="nc" id="L88">                    data.getGroupName());</span>
+<span class="nc" id="L89">            boolean isNotifyConsumerIdsChangedEnable = true;</span>
+<span class="nc bnc" id="L90" title="All 2 branches missed.">            if (null != subscriptionGroupConfig) {</span>
+<span class="nc" id="L91">                isNotifyConsumerIdsChangedEnable = subscriptionGroupConfig.isNotifyConsumerIdsChangedEnable();</span>
+<span class="nc" id="L92">                int topicSysFlag = 0;</span>
+<span class="nc bnc" id="L93" title="All 2 branches missed.">                if (data.isUnitMode()) {</span>
+<span class="nc" id="L94">                    topicSysFlag = TopicSysFlag.buildSysFlag(false, true);</span>
+                }
+<span class="nc" id="L96">                String newTopic = MixAll.getRetryTopic(data.getGroupName());</span>
+<span class="nc" id="L97">                this.brokerController.getTopicConfigManager().createTopicInSendMessageBackMethod(</span>
+                    newTopic,
+<span class="nc" id="L99">                    subscriptionGroupConfig.getRetryQueueNums(),</span>
+                    PermName.PERM_WRITE | PermName.PERM_READ, topicSysFlag);
+            }
+
+<span class="nc" id="L103">            boolean changed = this.brokerController.getConsumerManager().registerConsumer(</span>
+<span class="nc" id="L104">                data.getGroupName(),</span>
+                clientChannelInfo,
+<span class="nc" id="L106">                data.getConsumeType(),</span>
+<span class="nc" id="L107">                data.getMessageModel(),</span>
+<span class="nc" id="L108">                data.getConsumeFromWhere(),</span>
+<span class="nc" id="L109">                data.getSubscriptionDataSet(),</span>
+                isNotifyConsumerIdsChangedEnable
+            );
+
+<span class="nc bnc" id="L113" title="All 2 branches missed.">            if (changed) {</span>
+<span class="nc" id="L114">                log.info(&quot;registerConsumer info changed {} {}&quot;,</span>
+<span class="nc" id="L115">                    data.toString(),</span>
+<span class="nc" id="L116">                    RemotingHelper.parseChannelRemoteAddr(ctx.channel())</span>
+                );
+            }
+<span class="nc" id="L119">        }</span>
+
+<span class="nc bnc" id="L121" title="All 2 branches missed.">        for (ProducerData data : heartbeatData.getProducerDataSet()) {</span>
+<span class="nc" id="L122">            this.brokerController.getProducerManager().registerProducer(data.getGroupName(),</span>
+                clientChannelInfo);
+<span class="nc" id="L124">        }</span>
+<span class="nc" id="L125">        response.setCode(ResponseCode.SUCCESS);</span>
+<span class="nc" id="L126">        response.setRemark(null);</span>
+<span class="nc" id="L127">        return response;</span>
+    }
+
+    public RemotingCommand unregisterClient(ChannelHandlerContext ctx, RemotingCommand request)
+        throws RemotingCommandException {
+<span class="fc" id="L132">        final RemotingCommand response =</span>
+<span class="fc" id="L133">            RemotingCommand.createResponseCommand(UnregisterClientResponseHeader.class);</span>
+<span class="fc" id="L134">        final UnregisterClientRequestHeader requestHeader =</span>
+            (UnregisterClientRequestHeader) request
+<span class="fc" id="L136">                .decodeCommandCustomHeader(UnregisterClientRequestHeader.class);</span>
+
+<span class="fc" id="L138">        ClientChannelInfo clientChannelInfo = new ClientChannelInfo(</span>
+<span class="fc" id="L139">            ctx.channel(),</span>
+<span class="fc" id="L140">            requestHeader.getClientID(),</span>
+<span class="fc" id="L141">            request.getLanguage(),</span>
+<span class="fc" id="L142">            request.getVersion());</span>
+        {
+<span class="fc" id="L144">            final String group = requestHeader.getProducerGroup();</span>
+<span class="fc bfc" id="L145" title="All 2 branches covered.">            if (group != null) {</span>
+<span class="fc" id="L146">                this.brokerController.getProducerManager().unregisterProducer(group, clientChannelInfo);</span>
+            }
+        }
+
+        {
+<span class="fc" id="L151">            final String group = requestHeader.getConsumerGroup();</span>
+<span class="fc bfc" id="L152" title="All 2 branches covered.">            if (group != null) {</span>
+<span class="fc" id="L153">                SubscriptionGroupConfig subscriptionGroupConfig =</span>
+<span class="fc" id="L154">                    this.brokerController.getSubscriptionGroupManager().findSubscriptionGroupConfig(group);</span>
+<span class="fc" id="L155">                boolean isNotifyConsumerIdsChangedEnable = true;</span>
+<span class="pc bpc" id="L156" title="1 of 2 branches missed.">                if (null != subscriptionGroupConfig) {</span>
+<span class="fc" id="L157">                    isNotifyConsumerIdsChangedEnable = subscriptionGroupConfig.isNotifyConsumerIdsChangedEnable();</span>
+                }
+<span class="fc" id="L159">                this.brokerController.getConsumerManager().unregisterConsumer(group, clientChannelInfo, isNotifyConsumerIdsChangedEnable);</span>
+            }
+        }
+
+<span class="fc" id="L163">        response.setCode(ResponseCode.SUCCESS);</span>
+<span class="fc" id="L164">        response.setRemark(null);</span>
+<span class="fc" id="L165">        return response;</span>
+    }
+
+    public RemotingCommand checkClientConfig(ChannelHandlerContext ctx, RemotingCommand request)
+        throws RemotingCommandException {
+<span class="nc" id="L170">        final RemotingCommand response = RemotingCommand.createResponseCommand(null);</span>
+
+<span class="nc" id="L172">        CheckClientRequestBody requestBody = CheckClientRequestBody.decode(request.getBody(),</span>
+            CheckClientRequestBody.class);
+
+<span class="nc bnc" id="L175" title="All 4 branches missed.">        if (requestBody != null &amp;&amp; requestBody.getSubscriptionData() != null) {</span>
+<span class="nc" id="L176">            SubscriptionData subscriptionData = requestBody.getSubscriptionData();</span>
+
+<span class="nc bnc" id="L178" title="All 2 branches missed.">            if (ExpressionType.isTagType(subscriptionData.getExpressionType())) {</span>
+<span class="nc" id="L179">                response.setCode(ResponseCode.SUCCESS);</span>
+<span class="nc" id="L180">                response.setRemark(null);</span>
+<span class="nc" id="L181">                return response;</span>
+            }
+
+<span class="nc bnc" id="L184" title="All 2 branches missed.">            if (!this.brokerController.getBrokerConfig().isEnablePropertyFilter()) {</span>
+<span class="nc" id="L185">                response.setCode(ResponseCode.SYSTEM_ERROR);</span>
+<span class="nc" id="L186">                response.setRemark(&quot;The broker does not support consumer to filter message by &quot; + subscriptionData.getExpressionType());</span>
+<span class="nc" id="L187">                return response;</span>
+            }
+
+            try {
+<span class="nc" id="L191">                FilterFactory.INSTANCE.get(subscriptionData.getExpressionType()).compile(subscriptionData.getSubString());</span>
+<span class="nc" id="L192">            } catch (Exception e) {</span>
+<span class="nc" id="L193">                log.warn(&quot;Client {}@{} filter message, but failed to compile expression! sub={}, error={}&quot;,</span>
+<span class="nc" id="L194">                    requestBody.getClientId(), requestBody.getGroup(), requestBody.getSubscriptionData(), e.getMessage());</span>
+<span class="nc" id="L195">                response.setCode(ResponseCode.SUBSCRIPTION_PARSE_FAILED);</span>
+<span class="nc" id="L196">                response.setRemark(e.getMessage());</span>
+<span class="nc" id="L197">                return response;</span>
+<span class="nc" id="L198">            }</span>
+        }
+
+<span class="nc" id="L201">        response.setCode(ResponseCode.SUCCESS);</span>
+<span class="nc" id="L202">        response.setRemark(null);</span>
+<span class="nc" id="L203">        return response;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.5.201910111838</span></div></body></html>

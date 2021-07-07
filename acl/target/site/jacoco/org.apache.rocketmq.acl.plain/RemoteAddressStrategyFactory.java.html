@@ -1,0 +1,258 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>RemoteAddressStrategyFactory.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">rocketmq-acl 4.8.0</a> &gt; <a href="index.source.html" class="el_package">org.apache.rocketmq.acl.plain</a> &gt; <span class="el_source">RemoteAddressStrategyFactory.java</span></div><h1>RemoteAddressStrategyFactory.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.rocketmq.acl.plain;
+
+import java.util.HashSet;
+import java.util.Set;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.validator.routines.InetAddressValidator;
+import org.apache.rocketmq.acl.common.AclException;
+import org.apache.rocketmq.acl.common.AclUtils;
+import org.apache.rocketmq.common.constant.LoggerName;
+import org.apache.rocketmq.logging.InternalLogger;
+import org.apache.rocketmq.logging.InternalLoggerFactory;
+
+<span class="fc" id="L29">public class RemoteAddressStrategyFactory {</span>
+
+<span class="fc" id="L31">    private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.COMMON_LOGGER_NAME);</span>
+
+<span class="fc" id="L33">    public static final NullRemoteAddressStrategy NULL_NET_ADDRESS_STRATEGY = new NullRemoteAddressStrategy();</span>
+
+<span class="fc" id="L35">    public static final BlankRemoteAddressStrategy BLANK_NET_ADDRESS_STRATEGY = new BlankRemoteAddressStrategy();</span>
+
+    public RemoteAddressStrategy getRemoteAddressStrategy(PlainAccessResource plainAccessResource) {
+<span class="fc" id="L38">        return getRemoteAddressStrategy(plainAccessResource.getWhiteRemoteAddress());</span>
+    }
+
+    public RemoteAddressStrategy getRemoteAddressStrategy(String remoteAddr) {
+<span class="fc bfc" id="L42" title="All 2 branches covered.">        if (StringUtils.isBlank(remoteAddr)) {</span>
+<span class="fc" id="L43">            return BLANK_NET_ADDRESS_STRATEGY;</span>
+        }
+<span class="fc bfc" id="L45" title="All 6 branches covered.">        if (&quot;*&quot;.equals(remoteAddr) || &quot;*.*.*.*&quot;.equals(remoteAddr) || &quot;*:*:*:*:*:*:*:*&quot;.equals(remoteAddr)) {</span>
+<span class="fc" id="L46">            return NULL_NET_ADDRESS_STRATEGY;</span>
+        }
+<span class="fc bfc" id="L48" title="All 2 branches covered.">        if (remoteAddr.endsWith(&quot;}&quot;)) {</span>
+<span class="fc bfc" id="L49" title="All 2 branches covered.">            if (AclUtils.isColon(remoteAddr)) {</span>
+<span class="fc" id="L50">                String[] strArray = StringUtils.split(remoteAddr, &quot;:&quot;);</span>
+<span class="fc" id="L51">                String last = strArray[strArray.length - 1];</span>
+<span class="pc bpc" id="L52" title="1 of 2 branches missed.">                if (!last.startsWith(&quot;{&quot;)) {</span>
+<span class="nc" id="L53">                    throw new AclException(String.format(&quot;MultipleRemoteAddressStrategy netaddress examine scope Exception netaddress&quot;, remoteAddr));</span>
+                }
+<span class="fc" id="L55">                return new MultipleRemoteAddressStrategy(AclUtils.getAddresses(remoteAddr, last));</span>
+            } else {
+<span class="fc" id="L57">                String[] strArray = StringUtils.split(remoteAddr, &quot;.&quot;);</span>
+                // However a right IP String provided by user,it always can be divided into 4 parts by '.'.
+<span class="pc bpc" id="L59" title="1 of 2 branches missed.">                if (strArray.length &lt; 4) {</span>
+<span class="nc" id="L60">                    throw new AclException(String.format(&quot;MultipleRemoteAddressStrategy has got a/some wrong format IP(s) &quot;, remoteAddr));</span>
+                }
+<span class="fc" id="L62">                String lastStr = strArray[strArray.length - 1];</span>
+<span class="fc bfc" id="L63" title="All 2 branches covered.">                if (!lastStr.startsWith(&quot;{&quot;)) {</span>
+<span class="fc" id="L64">                    throw new AclException(String.format(&quot;MultipleRemoteAddressStrategy netaddress examine scope Exception netaddress&quot;, remoteAddr));</span>
+                }
+<span class="fc" id="L66">                return new MultipleRemoteAddressStrategy(AclUtils.getAddresses(remoteAddr, lastStr));</span>
+            }
+<span class="fc bfc" id="L68" title="All 2 branches covered.">        } else if (AclUtils.isComma(remoteAddr)) {</span>
+<span class="fc" id="L69">            return new MultipleRemoteAddressStrategy(StringUtils.split(remoteAddr, &quot;,&quot;));</span>
+<span class="fc bfc" id="L70" title="All 4 branches covered.">        } else if (AclUtils.isAsterisk(remoteAddr) || AclUtils.isMinus(remoteAddr)) {</span>
+<span class="fc" id="L71">            return new RangeRemoteAddressStrategy(remoteAddr);</span>
+        }
+<span class="fc" id="L73">        return new OneRemoteAddressStrategy(remoteAddr);</span>
+
+    }
+
+<span class="fc" id="L77">    public static class NullRemoteAddressStrategy implements RemoteAddressStrategy {</span>
+        @Override
+        public boolean match(PlainAccessResource plainAccessResource) {
+<span class="fc" id="L80">            return true;</span>
+        }
+
+    }
+
+<span class="fc" id="L85">    public static class BlankRemoteAddressStrategy implements RemoteAddressStrategy {</span>
+        @Override
+        public boolean match(PlainAccessResource plainAccessResource) {
+<span class="fc" id="L88">            return false;</span>
+        }
+
+    }
+
+    public static class MultipleRemoteAddressStrategy implements RemoteAddressStrategy {
+
+<span class="fc" id="L95">        private final Set&lt;String&gt; multipleSet = new HashSet&lt;&gt;();</span>
+
+<span class="fc" id="L97">        public MultipleRemoteAddressStrategy(String[] strArray) {</span>
+<span class="fc" id="L98">            InetAddressValidator validator = InetAddressValidator.getInstance();</span>
+<span class="fc bfc" id="L99" title="All 2 branches covered.">            for (String netaddress : strArray) {</span>
+<span class="fc bfc" id="L100" title="All 2 branches covered.">                if (validator.isValidInet4Address(netaddress)) {</span>
+<span class="fc" id="L101">                    multipleSet.add(netaddress);</span>
+<span class="pc bpc" id="L102" title="1 of 2 branches missed.">                } else if (validator.isValidInet6Address(netaddress)) {</span>
+<span class="fc" id="L103">                    multipleSet.add(AclUtils.expandIP(netaddress, 8));</span>
+                } else {
+<span class="nc" id="L105">                    throw new AclException(String.format(&quot;Netaddress examine Exception netaddress is %s&quot;, netaddress));</span>
+                }
+            }
+<span class="fc" id="L108">        }</span>
+
+        @Override
+        public boolean match(PlainAccessResource plainAccessResource) {
+<span class="fc" id="L112">            InetAddressValidator validator = InetAddressValidator.getInstance();</span>
+<span class="fc" id="L113">            String whiteRemoteAddress = plainAccessResource.getWhiteRemoteAddress();</span>
+<span class="fc bfc" id="L114" title="All 2 branches covered.">            if (validator.isValidInet6Address(whiteRemoteAddress)) {</span>
+<span class="fc" id="L115">                whiteRemoteAddress = AclUtils.expandIP(whiteRemoteAddress, 8);</span>
+            }
+<span class="fc" id="L117">            return multipleSet.contains(whiteRemoteAddress);</span>
+        }
+
+    }
+
+    public static class OneRemoteAddressStrategy implements RemoteAddressStrategy {
+
+        private String netaddress;
+
+<span class="fc" id="L126">        public OneRemoteAddressStrategy(String netaddress) {</span>
+<span class="fc" id="L127">            this.netaddress = netaddress;</span>
+<span class="fc" id="L128">            InetAddressValidator validator = InetAddressValidator.getInstance();</span>
+<span class="fc bfc" id="L129" title="All 4 branches covered.">            if (!(validator.isValidInet4Address(netaddress) || validator.isValidInet6Address(netaddress))) {</span>
+<span class="fc" id="L130">                throw new AclException(String.format(&quot;Netaddress examine Exception netaddress is %s&quot;, netaddress));</span>
+            }
+<span class="fc" id="L132">        }</span>
+
+        @Override
+        public boolean match(PlainAccessResource plainAccessResource) {
+<span class="fc" id="L136">            String writeRemoteAddress = AclUtils.expandIP(plainAccessResource.getWhiteRemoteAddress(), 8).toUpperCase();</span>
+<span class="fc" id="L137">            return AclUtils.expandIP(netaddress, 8).toUpperCase().equals(writeRemoteAddress);</span>
+        }
+
+    }
+
+    public static class RangeRemoteAddressStrategy implements RemoteAddressStrategy {
+
+        private String head;
+
+        private int start;
+
+        private int end;
+
+        private int index;
+
+<span class="fc" id="L152">        public RangeRemoteAddressStrategy(String remoteAddr) {</span>
+//            IPv6 Address
+<span class="fc bfc" id="L154" title="All 2 branches covered.">            if (AclUtils.isColon(remoteAddr)) {</span>
+<span class="fc" id="L155">                AclUtils.IPv6AddressCheck(remoteAddr);</span>
+<span class="fc" id="L156">                String[] strArray = StringUtils.split(remoteAddr, &quot;:&quot;);</span>
+<span class="pc bpc" id="L157" title="1 of 2 branches missed.">                for (int i = 1; i &lt; strArray.length; i++) {</span>
+<span class="fc bfc" id="L158" title="All 2 branches covered.">                    if (ipv6Analysis(strArray, i)) {</span>
+<span class="fc" id="L159">                        AclUtils.verify(remoteAddr, index - 1);</span>
+<span class="fc" id="L160">                        String preAddress = AclUtils.v6ipProcess(remoteAddr);</span>
+<span class="fc" id="L161">                        this.index = StringUtils.split(preAddress, &quot;:&quot;).length;</span>
+<span class="fc" id="L162">                        this.head = preAddress;</span>
+<span class="fc" id="L163">                        break;</span>
+                    }
+                }
+<span class="fc" id="L166">            } else {</span>
+<span class="fc" id="L167">                String[] strArray = StringUtils.split(remoteAddr, &quot;.&quot;);</span>
+<span class="pc bpc" id="L168" title="1 of 6 branches missed.">                if (analysis(strArray, 1) || analysis(strArray, 2) || analysis(strArray, 3)) {</span>
+<span class="fc" id="L169">                    AclUtils.verify(remoteAddr, index - 1);</span>
+<span class="fc" id="L170">                    StringBuffer sb = new StringBuffer();</span>
+<span class="fc bfc" id="L171" title="All 2 branches covered.">                    for (int j = 0; j &lt; index; j++) {</span>
+<span class="fc" id="L172">                        sb.append(strArray[j].trim()).append(&quot;.&quot;);</span>
+                    }
+<span class="fc" id="L174">                    this.head = sb.toString();</span>
+                }
+            }
+<span class="fc" id="L177">        }</span>
+
+        private boolean analysis(String[] strArray, int index) {
+<span class="fc" id="L180">            String value = strArray[index].trim();</span>
+<span class="fc" id="L181">            this.index = index;</span>
+<span class="fc bfc" id="L182" title="All 2 branches covered.">            if (&quot;*&quot;.equals(value)) {</span>
+<span class="fc" id="L183">                setValue(0, 255);</span>
+<span class="fc bfc" id="L184" title="All 2 branches covered.">            } else if (AclUtils.isMinus(value)) {</span>
+<span class="fc bfc" id="L185" title="All 2 branches covered.">                if (value.indexOf(&quot;-&quot;) == 0) {</span>
+<span class="fc" id="L186">                    throw new AclException(String.format(&quot;RangeRemoteAddressStrategy netaddress examine scope Exception value %s &quot;, value));</span>
+
+                }
+<span class="fc" id="L189">                String[] valueArray = StringUtils.split(value, &quot;-&quot;);</span>
+<span class="fc" id="L190">                this.start = Integer.valueOf(valueArray[0]);</span>
+<span class="fc" id="L191">                this.end = Integer.valueOf(valueArray[1]);</span>
+<span class="pc bpc" id="L192" title="1 of 6 branches missed.">                if (!(AclUtils.isScope(end) &amp;&amp; AclUtils.isScope(start) &amp;&amp; start &lt;= end)) {</span>
+<span class="fc" id="L193">                    throw new AclException(String.format(&quot;RangeRemoteAddressStrategy netaddress examine scope Exception start is %s , end is %s&quot;, start, end));</span>
+                }
+            }
+<span class="fc bfc" id="L196" title="All 2 branches covered.">            return this.end &gt; 0 ? true : false;</span>
+        }
+
+        private boolean ipv6Analysis(String[] strArray, int index) {
+<span class="fc" id="L200">            String value = strArray[index].trim();</span>
+<span class="fc" id="L201">            this.index = index;</span>
+<span class="fc bfc" id="L202" title="All 2 branches covered.">            if (&quot;*&quot;.equals(value)) {</span>
+<span class="fc" id="L203">                int min = Integer.parseInt(&quot;0&quot;, 16);</span>
+<span class="fc" id="L204">                int max = Integer.parseInt(&quot;ffff&quot;, 16);</span>
+<span class="fc" id="L205">                setValue(min, max);</span>
+<span class="fc bfc" id="L206" title="All 2 branches covered.">            } else if (AclUtils.isMinus(value)) {</span>
+<span class="pc bpc" id="L207" title="1 of 2 branches missed.">                if (value.indexOf(&quot;-&quot;) == 0) {</span>
+<span class="nc" id="L208">                    throw new AclException(String.format(&quot;RangeRemoteAddressStrategy netaddress examine scope Exception value %s &quot;, value));</span>
+                }
+<span class="fc" id="L210">                String[] valueArray = StringUtils.split(value, &quot;-&quot;);</span>
+<span class="fc" id="L211">                this.start = Integer.parseInt(valueArray[0], 16);</span>
+<span class="fc" id="L212">                this.end = Integer.parseInt(valueArray[1], 16);</span>
+<span class="pc bpc" id="L213" title="3 of 6 branches missed.">                if (!(AclUtils.isIPv6Scope(end) &amp;&amp; AclUtils.isIPv6Scope(start) &amp;&amp; start &lt;= end)) {</span>
+<span class="nc" id="L214">                    throw new AclException(String.format(&quot;RangeRemoteAddressStrategy netaddress examine scope Exception start is %s , end is %s&quot;, start, end));</span>
+                }
+            }
+<span class="fc bfc" id="L217" title="All 2 branches covered.">            return this.end &gt; 0 ? true : false;</span>
+        }
+
+        private void setValue(int start, int end) {
+<span class="fc" id="L221">            this.start = start;</span>
+<span class="fc" id="L222">            this.end = end;</span>
+<span class="fc" id="L223">        }</span>
+
+        @Override
+        public boolean match(PlainAccessResource plainAccessResource) {
+<span class="fc" id="L227">            String netAddress = plainAccessResource.getWhiteRemoteAddress();</span>
+<span class="fc" id="L228">            InetAddressValidator validator = InetAddressValidator.getInstance();</span>
+<span class="fc bfc" id="L229" title="All 2 branches covered.">            if (validator.isValidInet4Address(netAddress)) {</span>
+<span class="fc bfc" id="L230" title="All 2 branches covered.">                if (netAddress.startsWith(this.head)) {</span>
+                    String value;
+<span class="fc bfc" id="L232" title="All 2 branches covered.">                    if (index == 3) {</span>
+<span class="fc" id="L233">                        value = netAddress.substring(this.head.length());</span>
+<span class="fc bfc" id="L234" title="All 2 branches covered.">                    } else if (index == 2) {</span>
+<span class="fc" id="L235">                        value = netAddress.substring(this.head.length(), netAddress.lastIndexOf('.'));</span>
+                    } else {
+<span class="fc" id="L237">                        value = netAddress.substring(this.head.length(), netAddress.lastIndexOf('.', netAddress.lastIndexOf('.') - 1));</span>
+                    }
+<span class="fc" id="L239">                    Integer address = Integer.valueOf(value);</span>
+<span class="fc bfc" id="L240" title="All 4 branches covered.">                    if (address &gt;= this.start &amp;&amp; address &lt;= this.end) {</span>
+<span class="fc" id="L241">                        return true;</span>
+                    }
+<span class="fc" id="L243">                }</span>
+<span class="fc bfc" id="L244" title="All 2 branches covered.">            } else if (validator.isValidInet6Address(netAddress)) {</span>
+<span class="fc" id="L245">                netAddress = AclUtils.expandIP(netAddress, 8).toUpperCase();</span>
+<span class="fc bfc" id="L246" title="All 2 branches covered.">                if (netAddress.startsWith(this.head)) {</span>
+<span class="fc" id="L247">                    String value = netAddress.substring(5 * index, 5 * index + 4);</span>
+<span class="fc" id="L248">                    Integer address = Integer.parseInt(value, 16);</span>
+<span class="fc bfc" id="L249" title="All 4 branches covered.">                    if (address &gt;= this.start &amp;&amp; address &lt;= this.end) {</span>
+<span class="fc" id="L250">                        return true;</span>
+                    }
+                }
+            }
+<span class="fc" id="L254">            return false;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.5.201910111838</span></div></body></html>

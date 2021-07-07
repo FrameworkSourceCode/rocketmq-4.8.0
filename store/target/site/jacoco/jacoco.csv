@@ -1,0 +1,80 @@
+GROUP,PACKAGE,CLASS,INSTRUCTION_MISSED,INSTRUCTION_COVERED,BRANCH_MISSED,BRANCH_COVERED,LINE_MISSED,LINE_COVERED,COMPLEXITY_MISSED,COMPLEXITY_COVERED,METHOD_MISSED,METHOD_COVERED
+rocketmq-store 4.8.0,org.apache.rocketmq.store,TransientStorePool,111,31,7,1,22,9,8,3,4,3
+rocketmq-store 4.8.0,org.apache.rocketmq.store,PutMessageSpinLock,0,25,1,1,0,7,1,3,0,3
+rocketmq-store 4.8.0,org.apache.rocketmq.store,AppendMessageStatus,0,54,0,0,0,6,0,1,0,1
+rocketmq-store 4.8.0,org.apache.rocketmq.store,MessageExtBrokerInner,9,24,2,2,2,8,4,5,2,5
+rocketmq-store 4.8.0,org.apache.rocketmq.store,AllocateMappedFileService,260,273,26,30,46,67,23,12,0,7
+rocketmq-store 4.8.0,org.apache.rocketmq.store,GetMessageStatus,0,94,0,0,0,10,0,1,0,1
+rocketmq-store 4.8.0,org.apache.rocketmq.store,CommitLog.GroupCommitRequest,0,49,0,0,0,14,0,5,0,5
+rocketmq-store 4.8.0,org.apache.rocketmq.store,DefaultMessageStore.CommitLogDispatcherBuildIndex,0,17,0,2,0,4,0,3,0,2
+rocketmq-store 4.8.0,org.apache.rocketmq.store,CommitLog.new ThreadLocal() {...},0,17,0,0,0,2,0,2,0,2
+rocketmq-store 4.8.0,org.apache.rocketmq.store,MappedFileQueue,353,928,52,114,97,214,45,75,9,28
+rocketmq-store 4.8.0,org.apache.rocketmq.store,StoreCheckpoint,13,212,1,3,4,47,2,12,1,11
+rocketmq-store 4.8.0,org.apache.rocketmq.store,DefaultMessageStore.CleanConsumeQueueService,17,77,2,8,4,20,3,6,1,3
+rocketmq-store 4.8.0,org.apache.rocketmq.store,CommitLog,1044,1769,125,151,197,412,111,79,12,34
+rocketmq-store 4.8.0,org.apache.rocketmq.store,DefaultMessageFilter,41,0,10,0,10,0,8,0,3,0
+rocketmq-store 4.8.0,org.apache.rocketmq.store,DefaultMessageStore.CleanCommitLogService,95,388,16,40,18,86,17,22,3,8
+rocketmq-store 4.8.0,org.apache.rocketmq.store,MappedFile,673,735,59,55,113,157,54,52,12,37
+rocketmq-store 4.8.0,org.apache.rocketmq.store,PutMessageResult,22,29,2,2,3,9,4,5,2,5
+rocketmq-store 4.8.0,org.apache.rocketmq.store,QueryMessageResult,72,0,2,0,20,0,10,0,9,0
+rocketmq-store 4.8.0,org.apache.rocketmq.store,ConsumeQueueExt,74,524,20,44,24,120,21,29,1,17
+rocketmq-store 4.8.0,org.apache.rocketmq.store,DefaultMessageStore.new Runnable() {...},13,0,0,0,3,0,2,0,2,0
+rocketmq-store 4.8.0,org.apache.rocketmq.store,DefaultMessageStore.new Runnable() {...},0,12,0,0,0,3,0,2,0,2
+rocketmq-store 4.8.0,org.apache.rocketmq.store,DefaultMessageStore,1244,1887,189,171,294,449,162,108,27,63
+rocketmq-store 4.8.0,org.apache.rocketmq.store,DefaultMessageStore.new Runnable() {...},50,12,7,1,9,3,4,2,0,2
+rocketmq-store 4.8.0,org.apache.rocketmq.store,DefaultMessageStore.new Runnable() {...},4,6,0,0,2,1,1,1,1,1
+rocketmq-store 4.8.0,org.apache.rocketmq.store,DefaultMessageStore.new Runnable() {...},4,6,0,0,2,1,1,1,1,1
+rocketmq-store 4.8.0,org.apache.rocketmq.store,CommitLog.FlushRealTimeService,24,187,2,18,5,39,2,13,0,5
+rocketmq-store 4.8.0,org.apache.rocketmq.store,ConsumeQueueExt.CqExtUnit,146,227,19,27,27,55,19,20,4,12
+rocketmq-store 4.8.0,org.apache.rocketmq.store,DispatchRequest,56,136,0,0,20,47,4,17,4,17
+rocketmq-store 4.8.0,org.apache.rocketmq.store,CommitLog.CommitRealTimeService,151,10,14,0,29,2,9,1,2,1
+rocketmq-store 4.8.0,org.apache.rocketmq.store,ReferenceResource,20,91,4,12,4,25,3,12,0,7
+rocketmq-store 4.8.0,org.apache.rocketmq.store,MessageStore,10,0,0,0,2,0,2,0,2,0
+rocketmq-store 4.8.0,org.apache.rocketmq.store,StoreStatsService,1097,486,50,36,197,100,56,25,23,15
+rocketmq-store 4.8.0,org.apache.rocketmq.store,AppendMessageResult,91,62,1,1,18,21,11,10,10,10
+rocketmq-store 4.8.0,org.apache.rocketmq.store,StoreStatsService.CallSnapshot,23,9,0,0,4,4,1,1,1,1
+rocketmq-store 4.8.0,org.apache.rocketmq.store,ConsumeQueue,391,963,48,96,84,232,47,56,8,23
+rocketmq-store 4.8.0,org.apache.rocketmq.store,PutMessageStatus,0,104,0,0,0,11,0,1,0,1
+rocketmq-store 4.8.0,org.apache.rocketmq.store,SelectMappedBufferResult,10,34,0,2,3,13,1,6,1,5
+rocketmq-store 4.8.0,org.apache.rocketmq.store,StoreUtil,3,16,1,1,1,6,2,2,1,2
+rocketmq-store 4.8.0,org.apache.rocketmq.store,CommitLog.FlushCommitLogService,0,6,0,0,0,1,0,1,0,1
+rocketmq-store 4.8.0,org.apache.rocketmq.store,DefaultMessageStore.ReputMessageService,77,271,18,30,17,60,13,20,0,9
+rocketmq-store 4.8.0,org.apache.rocketmq.store,CommitLog.DefaultAppendMessageCallback,67,741,7,36,10,143,8,19,1,4
+rocketmq-store 4.8.0,org.apache.rocketmq.store,RunningFlags,90,68,14,8,28,17,16,10,8,7
+rocketmq-store 4.8.0,org.apache.rocketmq.store,MappedFile.new PrivilegedAction() {...},6,30,0,0,2,4,0,2,0,2
+rocketmq-store 4.8.0,org.apache.rocketmq.store,CommitLog.MessageExtBatchEncoder,29,286,4,12,3,65,4,7,0,3
+rocketmq-store 4.8.0,org.apache.rocketmq.store,PutMessageReentrantLock,16,0,0,0,6,0,3,0,3,0
+rocketmq-store 4.8.0,org.apache.rocketmq.store,DefaultMessageStore.CommitLogDispatcherBuildConsumeQueue,0,18,1,1,0,6,1,2,0,2
+rocketmq-store 4.8.0,org.apache.rocketmq.store,AllocateMappedFileService.AllocateRequest,90,80,20,4,30,21,17,7,5,7
+rocketmq-store 4.8.0,org.apache.rocketmq.store,DefaultMessageStore.FlushConsumeQueueService,0,167,0,18,0,38,0,14,0,5
+rocketmq-store 4.8.0,org.apache.rocketmq.store,CommitLog.GroupCommitService,20,193,2,16,4,46,2,15,0,8
+rocketmq-store 4.8.0,org.apache.rocketmq.store,GetMessageResult,57,109,0,2,9,33,7,15,7,14
+rocketmq-store 4.8.0,org.apache.rocketmq.store.dledger,DLedgerCommitLog.DLedgerSelectMappedBufferResult,0,22,1,1,0,7,1,2,0,2
+rocketmq-store 4.8.0,org.apache.rocketmq.store.dledger,DLedgerCommitLog.MessageSerializer,84,525,11,23,8,117,11,10,0,4
+rocketmq-store 4.8.0,org.apache.rocketmq.store.dledger,DLedgerCommitLog,472,1682,69,117,99,371,74,72,10,36
+rocketmq-store 4.8.0,org.apache.rocketmq.store.dledger,DLedgerCommitLog.EncodeResult,0,44,0,0,0,14,0,4,0,4
+rocketmq-store 4.8.0,org.apache.rocketmq.store.ha,HAConnection.ReadSocketService,42,261,6,16,9,59,6,9,0,4
+rocketmq-store 4.8.0,org.apache.rocketmq.store.ha,HAConnection,8,99,1,1,3,27,2,5,1,5
+rocketmq-store 4.8.0,org.apache.rocketmq.store.ha,HAService.HAClient,222,415,25,43,56,99,24,23,3,10
+rocketmq-store 4.8.0,org.apache.rocketmq.store.ha,WaitNotifyObject,27,152,6,10,8,44,6,10,0,8
+rocketmq-store 4.8.0,org.apache.rocketmq.store.ha,HAService.AcceptSocketService,37,146,3,7,8,37,3,7,0,5
+rocketmq-store 4.8.0,org.apache.rocketmq.store.ha,HAService,8,204,3,11,3,56,4,18,1,14
+rocketmq-store 4.8.0,org.apache.rocketmq.store.ha,HAService.GroupTransferService,29,175,5,13,3,40,5,12,0,8
+rocketmq-store 4.8.0,org.apache.rocketmq.store.ha,HAConnection.WriteSocketService,74,404,24,30,23,95,20,12,1,4
+rocketmq-store 4.8.0,org.apache.rocketmq.store.index,IndexHeader,7,237,1,1,2,53,3,14,2,14
+rocketmq-store 4.8.0,org.apache.rocketmq.store.index,QueryOffsetResult,21,0,0,0,8,0,4,0,4,0
+rocketmq-store 4.8.0,org.apache.rocketmq.store.index,IndexFile,109,478,36,40,24,100,30,22,2,12
+rocketmq-store 4.8.0,org.apache.rocketmq.store.index,IndexService,239,485,40,51,61,123,32,29,1,14
+rocketmq-store 4.8.0,org.apache.rocketmq.store.index,IndexService.new Runnable() {...},0,15,0,0,0,3,0,2,0,2
+rocketmq-store 4.8.0,org.apache.rocketmq.store.stats,BrokerStats,89,0,0,0,27,0,13,0,13,0
+rocketmq-store 4.8.0,org.apache.rocketmq.store.stats,BrokerStatsManager,100,583,0,0,20,83,7,18,7,18
+rocketmq-store 4.8.0,org.apache.rocketmq.store.stats,BrokerStatsManager.StatsType,84,0,0,0,9,0,1,0,1,0
+rocketmq-store 4.8.0,org.apache.rocketmq.store.schedule,DelayOffsetSerializeWrapper,0,16,0,0,0,5,0,3,0,3
+rocketmq-store 4.8.0,org.apache.rocketmq.store.schedule,ScheduleMessageService.new TimerTask() {...},5,16,1,1,2,4,1,2,0,2
+rocketmq-store 4.8.0,org.apache.rocketmq.store.schedule,ScheduleMessageService,20,369,9,19,7,80,11,21,2,16
+rocketmq-store 4.8.0,org.apache.rocketmq.store.schedule,ScheduleMessageService.DeliverDelayedMessageTimerTask,137,303,9,17,22,78,9,9,0,5
+rocketmq-store 4.8.0,org.apache.rocketmq.store.config,BrokerRole,0,34,0,0,0,4,0,1,0,1
+rocketmq-store 4.8.0,org.apache.rocketmq.store.config,FlushDiskType,0,24,0,0,0,3,0,1,0,1
+rocketmq-store 4.8.0,org.apache.rocketmq.store.config,MessageStoreConfig,246,495,7,3,110,172,66,79,61,79
+rocketmq-store 4.8.0,org.apache.rocketmq.store.config,StorePathConfigHelper,33,81,0,0,3,7,3,7,3,7
+rocketmq-store 4.8.0,org.apache.rocketmq.store.util,LibC,10,0,2,0,1,0,2,0,1,0

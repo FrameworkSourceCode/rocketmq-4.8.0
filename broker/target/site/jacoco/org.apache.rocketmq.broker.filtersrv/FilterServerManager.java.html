@@ -1,0 +1,168 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>FilterServerManager.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">rocketmq-broker 4.8.0</a> &gt; <a href="index.source.html" class="el_package">org.apache.rocketmq.broker.filtersrv</a> &gt; <span class="el_source">FilterServerManager.java</span></div><h1>FilterServerManager.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.rocketmq.broker.filtersrv;
+
+import io.netty.channel.Channel;
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map.Entry;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+import org.apache.rocketmq.broker.BrokerController;
+import org.apache.rocketmq.broker.BrokerStartup;
+import org.apache.rocketmq.common.ThreadFactoryImpl;
+import org.apache.rocketmq.common.constant.LoggerName;
+import org.apache.rocketmq.logging.InternalLogger;
+import org.apache.rocketmq.logging.InternalLoggerFactory;
+import org.apache.rocketmq.remoting.common.RemotingUtil;
+
+public class FilterServerManager {
+
+    public static final long FILTER_SERVER_MAX_IDLE_TIME_MILLS = 30000;
+<span class="fc" id="L41">    private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.BROKER_LOGGER_NAME);</span>
+<span class="fc" id="L42">    private final ConcurrentMap&lt;Channel, FilterServerInfo&gt; filterServerTable =</span>
+        new ConcurrentHashMap&lt;Channel, FilterServerInfo&gt;(16);
+    private final BrokerController brokerController;
+
+<span class="fc" id="L46">    private ScheduledExecutorService scheduledExecutorService = Executors</span>
+<span class="fc" id="L47">        .newSingleThreadScheduledExecutor(new ThreadFactoryImpl(&quot;FilterServerManagerScheduledThread&quot;));</span>
+
+<span class="fc" id="L49">    public FilterServerManager(final BrokerController brokerController) {</span>
+<span class="fc" id="L50">        this.brokerController = brokerController;</span>
+<span class="fc" id="L51">    }</span>
+
+    public void start() {
+
+<span class="fc" id="L55">        this.scheduledExecutorService.scheduleAtFixedRate(new Runnable() {</span>
+            @Override
+            public void run() {
+                try {
+<span class="fc" id="L59">                    FilterServerManager.this.createFilterServer();</span>
+<span class="nc" id="L60">                } catch (Exception e) {</span>
+<span class="nc" id="L61">                    log.error(&quot;&quot;, e);</span>
+<span class="fc" id="L62">                }</span>
+<span class="fc" id="L63">            }</span>
+        }, 1000 * 5, 1000 * 30, TimeUnit.MILLISECONDS);
+<span class="fc" id="L65">    }</span>
+
+    public void createFilterServer() {
+<span class="fc" id="L68">        int more =</span>
+<span class="fc" id="L69">            this.brokerController.getBrokerConfig().getFilterServerNums() - this.filterServerTable.size();</span>
+<span class="fc" id="L70">        String cmd = this.buildStartCommand();</span>
+<span class="pc bpc" id="L71" title="1 of 2 branches missed.">        for (int i = 0; i &lt; more; i++) {</span>
+<span class="nc" id="L72">            FilterServerUtil.callShell(cmd, log);</span>
+        }
+<span class="fc" id="L74">    }</span>
+
+    private String buildStartCommand() {
+<span class="fc" id="L77">        String config = &quot;&quot;;</span>
+<span class="pc bpc" id="L78" title="1 of 2 branches missed.">        if (BrokerStartup.configFile != null) {</span>
+<span class="nc" id="L79">            config = String.format(&quot;-c %s&quot;, BrokerStartup.configFile);</span>
+        }
+
+<span class="pc bpc" id="L82" title="1 of 2 branches missed.">        if (this.brokerController.getBrokerConfig().getNamesrvAddr() != null) {</span>
+<span class="nc" id="L83">            config += String.format(&quot; -n %s&quot;, this.brokerController.getBrokerConfig().getNamesrvAddr());</span>
+        }
+
+<span class="pc bpc" id="L86" title="1 of 2 branches missed.">        if (RemotingUtil.isWindowsPlatform()) {</span>
+<span class="nc" id="L87">            return String.format(&quot;start /b %s\\bin\\mqfiltersrv.exe %s&quot;,</span>
+<span class="nc" id="L88">                this.brokerController.getBrokerConfig().getRocketmqHome(),</span>
+                config);
+        } else {
+<span class="fc" id="L91">            return String.format(&quot;sh %s/bin/startfsrv.sh %s&quot;,</span>
+<span class="fc" id="L92">                this.brokerController.getBrokerConfig().getRocketmqHome(),</span>
+                config);
+        }
+    }
+
+    public void shutdown() {
+<span class="fc" id="L98">        this.scheduledExecutorService.shutdown();</span>
+<span class="fc" id="L99">    }</span>
+
+    public void registerFilterServer(final Channel channel, final String filterServerAddr) {
+<span class="nc" id="L102">        FilterServerInfo filterServerInfo = this.filterServerTable.get(channel);</span>
+<span class="nc bnc" id="L103" title="All 2 branches missed.">        if (filterServerInfo != null) {</span>
+<span class="nc" id="L104">            filterServerInfo.setLastUpdateTimestamp(System.currentTimeMillis());</span>
+        } else {
+<span class="nc" id="L106">            filterServerInfo = new FilterServerInfo();</span>
+<span class="nc" id="L107">            filterServerInfo.setFilterServerAddr(filterServerAddr);</span>
+<span class="nc" id="L108">            filterServerInfo.setLastUpdateTimestamp(System.currentTimeMillis());</span>
+<span class="nc" id="L109">            this.filterServerTable.put(channel, filterServerInfo);</span>
+<span class="nc" id="L110">            log.info(&quot;Receive a New Filter Server&lt;{}&gt;&quot;, filterServerAddr);</span>
+        }
+<span class="nc" id="L112">    }</span>
+
+    public void scanNotActiveChannel() {
+
+<span class="nc" id="L116">        Iterator&lt;Entry&lt;Channel, FilterServerInfo&gt;&gt; it = this.filterServerTable.entrySet().iterator();</span>
+<span class="nc bnc" id="L117" title="All 2 branches missed.">        while (it.hasNext()) {</span>
+<span class="nc" id="L118">            Entry&lt;Channel, FilterServerInfo&gt; next = it.next();</span>
+<span class="nc" id="L119">            long timestamp = next.getValue().getLastUpdateTimestamp();</span>
+<span class="nc" id="L120">            Channel channel = next.getKey();</span>
+<span class="nc bnc" id="L121" title="All 2 branches missed.">            if ((System.currentTimeMillis() - timestamp) &gt; FILTER_SERVER_MAX_IDLE_TIME_MILLS) {</span>
+<span class="nc" id="L122">                log.info(&quot;The Filter Server&lt;{}&gt; expired, remove it&quot;, next.getKey());</span>
+<span class="nc" id="L123">                it.remove();</span>
+<span class="nc" id="L124">                RemotingUtil.closeChannel(channel);</span>
+            }
+<span class="nc" id="L126">        }</span>
+<span class="nc" id="L127">    }</span>
+
+    public void doChannelCloseEvent(final String remoteAddr, final Channel channel) {
+<span class="nc" id="L130">        FilterServerInfo old = this.filterServerTable.remove(channel);</span>
+<span class="nc bnc" id="L131" title="All 2 branches missed.">        if (old != null) {</span>
+<span class="nc" id="L132">            log.warn(&quot;The Filter Server&lt;{}&gt; connection&lt;{}&gt; closed, remove it&quot;, old.getFilterServerAddr(),</span>
+                remoteAddr);
+        }
+<span class="nc" id="L135">    }</span>
+
+    public List&lt;String&gt; buildNewFilterServerList() {
+<span class="fc" id="L138">        List&lt;String&gt; addr = new ArrayList&lt;&gt;();</span>
+<span class="fc" id="L139">        Iterator&lt;Entry&lt;Channel, FilterServerInfo&gt;&gt; it = this.filterServerTable.entrySet().iterator();</span>
+<span class="pc bpc" id="L140" title="1 of 2 branches missed.">        while (it.hasNext()) {</span>
+<span class="nc" id="L141">            Entry&lt;Channel, FilterServerInfo&gt; next = it.next();</span>
+<span class="nc" id="L142">            addr.add(next.getValue().getFilterServerAddr());</span>
+<span class="nc" id="L143">        }</span>
+<span class="fc" id="L144">        return addr;</span>
+    }
+
+<span class="nc" id="L147">    static class FilterServerInfo {</span>
+        private String filterServerAddr;
+        private long lastUpdateTimestamp;
+
+        public String getFilterServerAddr() {
+<span class="nc" id="L152">            return filterServerAddr;</span>
+        }
+
+        public void setFilterServerAddr(String filterServerAddr) {
+<span class="nc" id="L156">            this.filterServerAddr = filterServerAddr;</span>
+<span class="nc" id="L157">        }</span>
+
+        public long getLastUpdateTimestamp() {
+<span class="nc" id="L160">            return lastUpdateTimestamp;</span>
+        }
+
+        public void setLastUpdateTimestamp(long lastUpdateTimestamp) {
+<span class="nc" id="L164">            this.lastUpdateTimestamp = lastUpdateTimestamp;</span>
+<span class="nc" id="L165">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.5.201910111838</span></div></body></html>

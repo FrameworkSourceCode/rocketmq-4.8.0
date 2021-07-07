@@ -1,0 +1,350 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>TransactionalMessageBridge.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">rocketmq-broker 4.8.0</a> &gt; <a href="index.source.html" class="el_package">org.apache.rocketmq.broker.transaction.queue</a> &gt; <span class="el_source">TransactionalMessageBridge.java</span></div><h1>TransactionalMessageBridge.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.rocketmq.broker.transaction.queue;
+
+import org.apache.rocketmq.broker.BrokerController;
+import org.apache.rocketmq.client.consumer.PullResult;
+import org.apache.rocketmq.client.consumer.PullStatus;
+import org.apache.rocketmq.common.TopicConfig;
+import org.apache.rocketmq.common.constant.LoggerName;
+import org.apache.rocketmq.common.constant.PermName;
+import org.apache.rocketmq.common.message.Message;
+import org.apache.rocketmq.common.message.MessageAccessor;
+import org.apache.rocketmq.common.message.MessageClientIDSetter;
+import org.apache.rocketmq.common.message.MessageConst;
+import org.apache.rocketmq.common.message.MessageDecoder;
+import org.apache.rocketmq.common.message.MessageExt;
+import org.apache.rocketmq.common.message.MessageQueue;
+import org.apache.rocketmq.common.protocol.heartbeat.SubscriptionData;
+import org.apache.rocketmq.common.sysflag.MessageSysFlag;
+import org.apache.rocketmq.logging.InnerLoggerFactory;
+import org.apache.rocketmq.logging.InternalLogger;
+import org.apache.rocketmq.remoting.common.RemotingHelper;
+import org.apache.rocketmq.store.GetMessageResult;
+import org.apache.rocketmq.store.MessageExtBrokerInner;
+import org.apache.rocketmq.store.MessageStore;
+import org.apache.rocketmq.store.PutMessageResult;
+import org.apache.rocketmq.store.PutMessageStatus;
+
+import java.net.InetSocketAddress;
+import java.net.SocketAddress;
+import java.nio.ByteBuffer;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+
+<span class="pc bpc" id="L53" title="1 of 2 branches missed.">public class TransactionalMessageBridge {</span>
+<span class="fc" id="L54">    private static final InternalLogger LOGGER = InnerLoggerFactory.getLogger(LoggerName.TRANSACTION_LOGGER_NAME);</span>
+
+<span class="fc" id="L56">    private final ConcurrentHashMap&lt;MessageQueue, MessageQueue&gt; opQueueMap = new ConcurrentHashMap&lt;&gt;();</span>
+    private final BrokerController brokerController;
+    private final MessageStore store;
+    private final SocketAddress storeHost;
+
+<span class="fc" id="L61">    public TransactionalMessageBridge(BrokerController brokerController, MessageStore store) {</span>
+        try {
+<span class="fc" id="L63">            this.brokerController = brokerController;</span>
+<span class="fc" id="L64">            this.store = store;</span>
+<span class="fc" id="L65">            this.storeHost =</span>
+<span class="fc" id="L66">                new InetSocketAddress(brokerController.getBrokerConfig().getBrokerIP1(),</span>
+<span class="fc" id="L67">                    brokerController.getNettyServerConfig().getListenPort());</span>
+<span class="nc" id="L68">        } catch (Exception e) {</span>
+<span class="nc" id="L69">            LOGGER.error(&quot;Init TransactionBridge error&quot;, e);</span>
+<span class="nc" id="L70">            throw new RuntimeException(e);</span>
+<span class="fc" id="L71">        }</span>
+
+<span class="fc" id="L73">    }</span>
+
+    public long fetchConsumeOffset(MessageQueue mq) {
+<span class="fc" id="L76">        long offset = brokerController.getConsumerOffsetManager().queryOffset(TransactionalMessageUtil.buildConsumerGroup(),</span>
+<span class="fc" id="L77">            mq.getTopic(), mq.getQueueId());</span>
+<span class="pc bpc" id="L78" title="1 of 2 branches missed.">        if (offset == -1) {</span>
+<span class="fc" id="L79">            offset = store.getMinOffsetInQueue(mq.getTopic(), mq.getQueueId());</span>
+        }
+<span class="fc" id="L81">        return offset;</span>
+    }
+
+    public Set&lt;MessageQueue&gt; fetchMessageQueues(String topic) {
+<span class="fc" id="L85">        Set&lt;MessageQueue&gt; mqSet = new HashSet&lt;&gt;();</span>
+<span class="fc" id="L86">        TopicConfig topicConfig = selectTopicConfig(topic);</span>
+<span class="pc bpc" id="L87" title="2 of 4 branches missed.">        if (topicConfig != null &amp;&amp; topicConfig.getReadQueueNums() &gt; 0) {</span>
+<span class="fc bfc" id="L88" title="All 2 branches covered.">            for (int i = 0; i &lt; topicConfig.getReadQueueNums(); i++) {</span>
+<span class="fc" id="L89">                MessageQueue mq = new MessageQueue();</span>
+<span class="fc" id="L90">                mq.setTopic(topic);</span>
+<span class="fc" id="L91">                mq.setBrokerName(brokerController.getBrokerConfig().getBrokerName());</span>
+<span class="fc" id="L92">                mq.setQueueId(i);</span>
+<span class="fc" id="L93">                mqSet.add(mq);</span>
+            }
+        }
+<span class="fc" id="L96">        return mqSet;</span>
+    }
+
+    public void updateConsumeOffset(MessageQueue mq, long offset) {
+<span class="fc" id="L100">        this.brokerController.getConsumerOffsetManager().commitOffset(</span>
+<span class="fc" id="L101">            RemotingHelper.parseSocketAddressAddr(this.storeHost), TransactionalMessageUtil.buildConsumerGroup(), mq.getTopic(),</span>
+<span class="fc" id="L102">            mq.getQueueId(), offset);</span>
+<span class="fc" id="L103">    }</span>
+
+    public PullResult getHalfMessage(int queueId, long offset, int nums) {
+<span class="fc" id="L106">        String group = TransactionalMessageUtil.buildConsumerGroup();</span>
+<span class="fc" id="L107">        String topic = TransactionalMessageUtil.buildHalfTopic();</span>
+<span class="fc" id="L108">        SubscriptionData sub = new SubscriptionData(topic, &quot;*&quot;);</span>
+<span class="fc" id="L109">        return getMessage(group, topic, queueId, offset, nums, sub);</span>
+    }
+
+    public PullResult getOpMessage(int queueId, long offset, int nums) {
+<span class="fc" id="L113">        String group = TransactionalMessageUtil.buildConsumerGroup();</span>
+<span class="fc" id="L114">        String topic = TransactionalMessageUtil.buildOpTopic();</span>
+<span class="fc" id="L115">        SubscriptionData sub = new SubscriptionData(topic, &quot;*&quot;);</span>
+<span class="fc" id="L116">        return getMessage(group, topic, queueId, offset, nums, sub);</span>
+    }
+
+    private PullResult getMessage(String group, String topic, int queueId, long offset, int nums,
+        SubscriptionData sub) {
+<span class="fc" id="L121">        GetMessageResult getMessageResult = store.getMessage(group, topic, queueId, offset, nums, null);</span>
+
+<span class="fc bfc" id="L123" title="All 2 branches covered.">        if (getMessageResult != null) {</span>
+<span class="fc" id="L124">            PullStatus pullStatus = PullStatus.NO_NEW_MSG;</span>
+<span class="fc" id="L125">            List&lt;MessageExt&gt; foundList = null;</span>
+<span class="pc bpc" id="L126" title="3 of 5 branches missed.">            switch (getMessageResult.getStatus()) {</span>
+                case FOUND:
+<span class="fc" id="L128">                    pullStatus = PullStatus.FOUND;</span>
+<span class="fc" id="L129">                    foundList = decodeMsgList(getMessageResult);</span>
+<span class="fc" id="L130">                    this.brokerController.getBrokerStatsManager().incGroupGetNums(group, topic,</span>
+<span class="fc" id="L131">                        getMessageResult.getMessageCount());</span>
+<span class="fc" id="L132">                    this.brokerController.getBrokerStatsManager().incGroupGetSize(group, topic,</span>
+<span class="fc" id="L133">                        getMessageResult.getBufferTotalSize());</span>
+<span class="fc" id="L134">                    this.brokerController.getBrokerStatsManager().incBrokerGetNums(getMessageResult.getMessageCount());</span>
+<span class="pc bpc" id="L135" title="2 of 4 branches missed.">                    if (foundList == null || foundList.size() == 0) {</span>
+<span class="fc" id="L136">                        break;</span>
+                    }
+<span class="nc" id="L138">                    this.brokerController.getBrokerStatsManager().recordDiskFallBehindTime(group, topic, queueId,</span>
+<span class="nc" id="L139">                        this.brokerController.getMessageStore().now() - foundList.get(foundList.size() - 1)</span>
+<span class="nc" id="L140">                            .getStoreTimestamp());</span>
+<span class="nc" id="L141">                    break;</span>
+                case NO_MATCHED_MESSAGE:
+<span class="nc" id="L143">                    pullStatus = PullStatus.NO_MATCHED_MSG;</span>
+<span class="nc" id="L144">                    LOGGER.warn(&quot;No matched message. GetMessageStatus={}, topic={}, groupId={}, requestOffset={}&quot;,</span>
+<span class="nc" id="L145">                        getMessageResult.getStatus(), topic, group, offset);</span>
+<span class="nc" id="L146">                    break;</span>
+                case NO_MESSAGE_IN_QUEUE:
+                case OFFSET_OVERFLOW_ONE:
+<span class="fc" id="L149">                    pullStatus = PullStatus.NO_NEW_MSG;</span>
+<span class="fc" id="L150">                    LOGGER.warn(&quot;No new message. GetMessageStatus={}, topic={}, groupId={}, requestOffset={}&quot;,</span>
+<span class="fc" id="L151">                        getMessageResult.getStatus(), topic, group, offset);</span>
+<span class="fc" id="L152">                    break;</span>
+                case MESSAGE_WAS_REMOVING:
+                case NO_MATCHED_LOGIC_QUEUE:
+                case OFFSET_FOUND_NULL:
+                case OFFSET_OVERFLOW_BADLY:
+                case OFFSET_TOO_SMALL:
+<span class="nc" id="L158">                    pullStatus = PullStatus.OFFSET_ILLEGAL;</span>
+<span class="nc" id="L159">                    LOGGER.warn(&quot;Offset illegal. GetMessageStatus={}, topic={}, groupId={}, requestOffset={}&quot;,</span>
+<span class="nc" id="L160">                        getMessageResult.getStatus(), topic, group, offset);</span>
+<span class="nc" id="L161">                    break;</span>
+                default:
+<span class="nc bnc" id="L163" title="All 2 branches missed.">                    assert false;</span>
+                    break;
+            }
+
+<span class="fc" id="L167">            return new PullResult(pullStatus, getMessageResult.getNextBeginOffset(), getMessageResult.getMinOffset(),</span>
+<span class="fc" id="L168">                getMessageResult.getMaxOffset(), foundList);</span>
+
+        } else {
+<span class="fc" id="L171">            LOGGER.error(&quot;Get message from store return null. topic={}, groupId={}, requestOffset={}&quot;, topic, group,</span>
+<span class="fc" id="L172">                offset);</span>
+<span class="fc" id="L173">            return null;</span>
+        }
+    }
+
+    private List&lt;MessageExt&gt; decodeMsgList(GetMessageResult getMessageResult) {
+<span class="fc" id="L178">        List&lt;MessageExt&gt; foundList = new ArrayList&lt;&gt;();</span>
+        try {
+<span class="fc" id="L180">            List&lt;ByteBuffer&gt; messageBufferList = getMessageResult.getMessageBufferList();</span>
+<span class="pc bpc" id="L181" title="1 of 2 branches missed.">            for (ByteBuffer bb : messageBufferList) {</span>
+<span class="nc" id="L182">                MessageExt msgExt = MessageDecoder.decode(bb, true, false);</span>
+<span class="nc bnc" id="L183" title="All 2 branches missed.">                if (msgExt != null) {</span>
+<span class="nc" id="L184">                    foundList.add(msgExt);</span>
+                }
+<span class="nc" id="L186">            }</span>
+
+        } finally {
+<span class="fc" id="L189">            getMessageResult.release();</span>
+        }
+
+<span class="fc" id="L192">        return foundList;</span>
+    }
+
+    public PutMessageResult putHalfMessage(MessageExtBrokerInner messageInner) {
+<span class="fc" id="L196">        return store.putMessage(parseHalfMessageInner(messageInner));</span>
+    }
+
+    public CompletableFuture&lt;PutMessageResult&gt; asyncPutHalfMessage(MessageExtBrokerInner messageInner) {
+<span class="fc" id="L200">        return store.asyncPutMessage(parseHalfMessageInner(messageInner));</span>
+    }
+
+    private MessageExtBrokerInner parseHalfMessageInner(MessageExtBrokerInner msgInner) {
+<span class="fc" id="L204">        MessageAccessor.putProperty(msgInner, MessageConst.PROPERTY_REAL_TOPIC, msgInner.getTopic());</span>
+<span class="fc" id="L205">        MessageAccessor.putProperty(msgInner, MessageConst.PROPERTY_REAL_QUEUE_ID,</span>
+<span class="fc" id="L206">            String.valueOf(msgInner.getQueueId()));</span>
+<span class="fc" id="L207">        msgInner.setSysFlag(</span>
+<span class="fc" id="L208">            MessageSysFlag.resetTransactionValue(msgInner.getSysFlag(), MessageSysFlag.TRANSACTION_NOT_TYPE));</span>
+<span class="fc" id="L209">        msgInner.setTopic(TransactionalMessageUtil.buildHalfTopic());</span>
+<span class="fc" id="L210">        msgInner.setQueueId(0);</span>
+<span class="fc" id="L211">        msgInner.setPropertiesString(MessageDecoder.messageProperties2String(msgInner.getProperties()));</span>
+<span class="fc" id="L212">        return msgInner;</span>
+    }
+
+    public boolean putOpMessage(MessageExt messageExt, String opType) {
+<span class="fc" id="L216">        MessageQueue messageQueue = new MessageQueue(messageExt.getTopic(),</span>
+<span class="fc" id="L217">            this.brokerController.getBrokerConfig().getBrokerName(), messageExt.getQueueId());</span>
+<span class="pc bpc" id="L218" title="1 of 2 branches missed.">        if (TransactionalMessageUtil.REMOVETAG.equals(opType)) {</span>
+<span class="fc" id="L219">            return addRemoveTagInTransactionOp(messageExt, messageQueue);</span>
+        }
+<span class="nc" id="L221">        return true;</span>
+    }
+
+    public PutMessageResult putMessageReturnResult(MessageExtBrokerInner messageInner) {
+<span class="fc" id="L225">        LOGGER.debug(&quot;[BUG-TO-FIX] Thread:{} msgID:{}&quot;, Thread.currentThread().getName(), messageInner.getMsgId());</span>
+<span class="fc" id="L226">        return store.putMessage(messageInner);</span>
+    }
+
+    public boolean putMessage(MessageExtBrokerInner messageInner) {
+<span class="fc" id="L230">        PutMessageResult putMessageResult = store.putMessage(messageInner);</span>
+<span class="fc bfc" id="L231" title="All 2 branches covered.">        if (putMessageResult != null</span>
+<span class="pc bpc" id="L232" title="1 of 2 branches missed.">            &amp;&amp; putMessageResult.getPutMessageStatus() == PutMessageStatus.PUT_OK) {</span>
+<span class="fc" id="L233">            return true;</span>
+        } else {
+<span class="fc" id="L235">            LOGGER.error(&quot;Put message failed, topic: {}, queueId: {}, msgId: {}&quot;,</span>
+<span class="fc" id="L236">                messageInner.getTopic(), messageInner.getQueueId(), messageInner.getMsgId());</span>
+<span class="fc" id="L237">            return false;</span>
+        }
+    }
+
+    public MessageExtBrokerInner renewImmunityHalfMessageInner(MessageExt msgExt) {
+<span class="fc" id="L242">        MessageExtBrokerInner msgInner = renewHalfMessageInner(msgExt);</span>
+<span class="fc" id="L243">        String queueOffsetFromPrepare = msgExt.getUserProperty(MessageConst.PROPERTY_TRANSACTION_PREPARED_QUEUE_OFFSET);</span>
+<span class="pc bpc" id="L244" title="1 of 2 branches missed.">        if (null != queueOffsetFromPrepare) {</span>
+<span class="nc" id="L245">            MessageAccessor.putProperty(msgInner, MessageConst.PROPERTY_TRANSACTION_PREPARED_QUEUE_OFFSET,</span>
+<span class="nc" id="L246">                String.valueOf(queueOffsetFromPrepare));</span>
+        } else {
+<span class="fc" id="L248">            MessageAccessor.putProperty(msgInner, MessageConst.PROPERTY_TRANSACTION_PREPARED_QUEUE_OFFSET,</span>
+<span class="fc" id="L249">                String.valueOf(msgExt.getQueueOffset()));</span>
+        }
+
+<span class="fc" id="L252">        msgInner.setPropertiesString(MessageDecoder.messageProperties2String(msgInner.getProperties()));</span>
+
+<span class="fc" id="L254">        return msgInner;</span>
+    }
+
+    public MessageExtBrokerInner renewHalfMessageInner(MessageExt msgExt) {
+<span class="fc" id="L258">        MessageExtBrokerInner msgInner = new MessageExtBrokerInner();</span>
+<span class="fc" id="L259">        msgInner.setTopic(msgExt.getTopic());</span>
+<span class="fc" id="L260">        msgInner.setBody(msgExt.getBody());</span>
+<span class="fc" id="L261">        msgInner.setQueueId(msgExt.getQueueId());</span>
+<span class="fc" id="L262">        msgInner.setMsgId(msgExt.getMsgId());</span>
+<span class="fc" id="L263">        msgInner.setSysFlag(msgExt.getSysFlag());</span>
+<span class="fc" id="L264">        msgInner.setTags(msgExt.getTags());</span>
+<span class="fc" id="L265">        msgInner.setTagsCode(MessageExtBrokerInner.tagsString2tagsCode(msgInner.getTags()));</span>
+<span class="fc" id="L266">        MessageAccessor.setProperties(msgInner, msgExt.getProperties());</span>
+<span class="fc" id="L267">        msgInner.setPropertiesString(MessageDecoder.messageProperties2String(msgExt.getProperties()));</span>
+<span class="fc" id="L268">        msgInner.setBornTimestamp(msgExt.getBornTimestamp());</span>
+<span class="fc" id="L269">        msgInner.setBornHost(msgExt.getBornHost());</span>
+<span class="fc" id="L270">        msgInner.setStoreHost(msgExt.getStoreHost());</span>
+<span class="fc" id="L271">        msgInner.setWaitStoreMsgOK(false);</span>
+<span class="fc" id="L272">        return msgInner;</span>
+    }
+
+    private MessageExtBrokerInner makeOpMessageInner(Message message, MessageQueue messageQueue) {
+<span class="fc" id="L276">        MessageExtBrokerInner msgInner = new MessageExtBrokerInner();</span>
+<span class="fc" id="L277">        msgInner.setTopic(message.getTopic());</span>
+<span class="fc" id="L278">        msgInner.setBody(message.getBody());</span>
+<span class="fc" id="L279">        msgInner.setQueueId(messageQueue.getQueueId());</span>
+<span class="fc" id="L280">        msgInner.setTags(message.getTags());</span>
+<span class="fc" id="L281">        msgInner.setTagsCode(MessageExtBrokerInner.tagsString2tagsCode(msgInner.getTags()));</span>
+<span class="fc" id="L282">        msgInner.setSysFlag(0);</span>
+<span class="fc" id="L283">        MessageAccessor.setProperties(msgInner, message.getProperties());</span>
+<span class="fc" id="L284">        msgInner.setPropertiesString(MessageDecoder.messageProperties2String(message.getProperties()));</span>
+<span class="fc" id="L285">        msgInner.setBornTimestamp(System.currentTimeMillis());</span>
+<span class="fc" id="L286">        msgInner.setBornHost(this.storeHost);</span>
+<span class="fc" id="L287">        msgInner.setStoreHost(this.storeHost);</span>
+<span class="fc" id="L288">        msgInner.setWaitStoreMsgOK(false);</span>
+<span class="fc" id="L289">        MessageClientIDSetter.setUniqID(msgInner);</span>
+<span class="fc" id="L290">        return msgInner;</span>
+    }
+
+    private TopicConfig selectTopicConfig(String topic) {
+<span class="fc" id="L294">        TopicConfig topicConfig = brokerController.getTopicConfigManager().selectTopicConfig(topic);</span>
+<span class="pc bpc" id="L295" title="1 of 2 branches missed.">        if (topicConfig == null) {</span>
+<span class="fc" id="L296">            topicConfig = this.brokerController.getTopicConfigManager().createTopicInSendMessageBackMethod(</span>
+                topic, 1, PermName.PERM_WRITE | PermName.PERM_READ, 0);
+        }
+<span class="fc" id="L299">        return topicConfig;</span>
+    }
+
+    /**
+     * Use this function while transaction msg is committed or rollback write a flag 'd' to operation queue for the
+     * msg's offset
+     *
+     * @param messageExt Op message
+     * @param messageQueue Op message queue
+     * @return This method will always return true.
+     */
+    private boolean addRemoveTagInTransactionOp(MessageExt messageExt, MessageQueue messageQueue) {
+<span class="fc" id="L311">        Message message = new Message(TransactionalMessageUtil.buildOpTopic(), TransactionalMessageUtil.REMOVETAG,</span>
+<span class="fc" id="L312">            String.valueOf(messageExt.getQueueOffset()).getBytes(TransactionalMessageUtil.charset));</span>
+<span class="fc" id="L313">        writeOp(message, messageQueue);</span>
+<span class="fc" id="L314">        return true;</span>
+    }
+
+    private void writeOp(Message message, MessageQueue mq) {
+        MessageQueue opQueue;
+<span class="pc bpc" id="L319" title="1 of 2 branches missed.">        if (opQueueMap.containsKey(mq)) {</span>
+<span class="nc" id="L320">            opQueue = opQueueMap.get(mq);</span>
+        } else {
+<span class="fc" id="L322">            opQueue = getOpQueueByHalf(mq);</span>
+<span class="fc" id="L323">            MessageQueue oldQueue = opQueueMap.putIfAbsent(mq, opQueue);</span>
+<span class="pc bpc" id="L324" title="1 of 2 branches missed.">            if (oldQueue != null) {</span>
+<span class="nc" id="L325">                opQueue = oldQueue;</span>
+            }
+        }
+<span class="pc bpc" id="L328" title="1 of 2 branches missed.">        if (opQueue == null) {</span>
+<span class="nc" id="L329">            opQueue = new MessageQueue(TransactionalMessageUtil.buildOpTopic(), mq.getBrokerName(), mq.getQueueId());</span>
+        }
+<span class="fc" id="L331">        putMessage(makeOpMessageInner(message, opQueue));</span>
+<span class="fc" id="L332">    }</span>
+
+    private MessageQueue getOpQueueByHalf(MessageQueue halfMQ) {
+<span class="fc" id="L335">        MessageQueue opQueue = new MessageQueue();</span>
+<span class="fc" id="L336">        opQueue.setTopic(TransactionalMessageUtil.buildOpTopic());</span>
+<span class="fc" id="L337">        opQueue.setBrokerName(halfMQ.getBrokerName());</span>
+<span class="fc" id="L338">        opQueue.setQueueId(halfMQ.getQueueId());</span>
+<span class="fc" id="L339">        return opQueue;</span>
+    }
+
+    public MessageExt lookMessageByOffset(final long commitLogOffset) {
+<span class="fc" id="L343">        return this.store.lookMessageByOffset(commitLogOffset);</span>
+    }
+
+    public BrokerController getBrokerController() {
+<span class="nc" id="L347">        return brokerController;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.5.201910111838</span></div></body></html>

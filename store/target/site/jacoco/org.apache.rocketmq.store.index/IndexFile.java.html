@@ -1,0 +1,267 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>IndexFile.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">rocketmq-store 4.8.0</a> &gt; <a href="index.source.html" class="el_package">org.apache.rocketmq.store.index</a> &gt; <span class="el_source">IndexFile.java</span></div><h1>IndexFile.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.rocketmq.store.index;
+
+import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.MappedByteBuffer;
+import java.nio.channels.FileChannel;
+import java.nio.channels.FileLock;
+import java.util.List;
+import org.apache.rocketmq.common.constant.LoggerName;
+import org.apache.rocketmq.logging.InternalLogger;
+import org.apache.rocketmq.logging.InternalLoggerFactory;
+import org.apache.rocketmq.store.MappedFile;
+
+public class IndexFile {
+<span class="fc" id="L31">    private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.STORE_LOGGER_NAME);</span>
+<span class="fc" id="L32">    private static int hashSlotSize = 4;</span>
+<span class="fc" id="L33">    private static int indexSize = 20;</span>
+<span class="fc" id="L34">    private static int invalidIndex = 0;</span>
+    private final int hashSlotNum;
+    private final int indexNum;
+    private final MappedFile mappedFile;
+    private final FileChannel fileChannel;
+    private final MappedByteBuffer mappedByteBuffer;
+    private final IndexHeader indexHeader;
+
+    public IndexFile(final String fileName, final int hashSlotNum, final int indexNum,
+<span class="fc" id="L43">        final long endPhyOffset, final long endTimestamp) throws IOException {</span>
+<span class="fc" id="L44">        int fileTotalSize =</span>
+            IndexHeader.INDEX_HEADER_SIZE + (hashSlotNum * hashSlotSize) + (indexNum * indexSize);
+<span class="fc" id="L46">        this.mappedFile = new MappedFile(fileName, fileTotalSize);</span>
+<span class="fc" id="L47">        this.fileChannel = this.mappedFile.getFileChannel();</span>
+<span class="fc" id="L48">        this.mappedByteBuffer = this.mappedFile.getMappedByteBuffer();</span>
+<span class="fc" id="L49">        this.hashSlotNum = hashSlotNum;</span>
+<span class="fc" id="L50">        this.indexNum = indexNum;</span>
+
+<span class="fc" id="L52">        ByteBuffer byteBuffer = this.mappedByteBuffer.slice();</span>
+<span class="fc" id="L53">        this.indexHeader = new IndexHeader(byteBuffer);</span>
+
+<span class="fc bfc" id="L55" title="All 2 branches covered.">        if (endPhyOffset &gt; 0) {</span>
+<span class="fc" id="L56">            this.indexHeader.setBeginPhyOffset(endPhyOffset);</span>
+<span class="fc" id="L57">            this.indexHeader.setEndPhyOffset(endPhyOffset);</span>
+        }
+
+<span class="fc bfc" id="L60" title="All 2 branches covered.">        if (endTimestamp &gt; 0) {</span>
+<span class="fc" id="L61">            this.indexHeader.setBeginTimestamp(endTimestamp);</span>
+<span class="fc" id="L62">            this.indexHeader.setEndTimestamp(endTimestamp);</span>
+        }
+<span class="fc" id="L64">    }</span>
+
+    public String getFileName() {
+<span class="fc" id="L67">        return this.mappedFile.getFileName();</span>
+    }
+
+    public void load() {
+<span class="fc" id="L71">        this.indexHeader.load();</span>
+<span class="fc" id="L72">    }</span>
+
+    public void flush() {
+<span class="fc" id="L75">        long beginTime = System.currentTimeMillis();</span>
+<span class="pc bpc" id="L76" title="1 of 2 branches missed.">        if (this.mappedFile.hold()) {</span>
+<span class="fc" id="L77">            this.indexHeader.updateByteBuffer();</span>
+<span class="fc" id="L78">            this.mappedByteBuffer.force();</span>
+<span class="fc" id="L79">            this.mappedFile.release();</span>
+<span class="fc" id="L80">            log.info(&quot;flush index file elapsed time(ms) &quot; + (System.currentTimeMillis() - beginTime));</span>
+        }
+<span class="fc" id="L82">    }</span>
+
+    public boolean isWriteFull() {
+<span class="fc bfc" id="L85" title="All 2 branches covered.">        return this.indexHeader.getIndexCount() &gt;= this.indexNum;</span>
+    }
+
+    public boolean destroy(final long intervalForcibly) {
+<span class="fc" id="L89">        return this.mappedFile.destroy(intervalForcibly);</span>
+    }
+
+    public boolean putKey(final String key, final long phyOffset, final long storeTimestamp) {
+<span class="fc bfc" id="L93" title="All 2 branches covered.">        if (this.indexHeader.getIndexCount() &lt; this.indexNum) {</span>
+<span class="fc" id="L94">            int keyHash = indexKeyHashMethod(key);</span>
+<span class="fc" id="L95">            int slotPos = keyHash % this.hashSlotNum;</span>
+<span class="fc" id="L96">            int absSlotPos = IndexHeader.INDEX_HEADER_SIZE + slotPos * hashSlotSize;</span>
+
+<span class="fc" id="L98">            FileLock fileLock = null;</span>
+
+            try {
+
+                // fileLock = this.fileChannel.lock(absSlotPos, hashSlotSize,
+                // false);
+<span class="fc" id="L104">                int slotValue = this.mappedByteBuffer.getInt(absSlotPos);</span>
+<span class="pc bpc" id="L105" title="1 of 4 branches missed.">                if (slotValue &lt;= invalidIndex || slotValue &gt; this.indexHeader.getIndexCount()) {</span>
+<span class="fc" id="L106">                    slotValue = invalidIndex;</span>
+                }
+
+<span class="fc" id="L109">                long timeDiff = storeTimestamp - this.indexHeader.getBeginTimestamp();</span>
+
+<span class="fc" id="L111">                timeDiff = timeDiff / 1000;</span>
+
+<span class="fc bfc" id="L113" title="All 2 branches covered.">                if (this.indexHeader.getBeginTimestamp() &lt;= 0) {</span>
+<span class="fc" id="L114">                    timeDiff = 0;</span>
+<span class="pc bpc" id="L115" title="1 of 2 branches missed.">                } else if (timeDiff &gt; Integer.MAX_VALUE) {</span>
+<span class="nc" id="L116">                    timeDiff = Integer.MAX_VALUE;</span>
+<span class="pc bpc" id="L117" title="1 of 2 branches missed.">                } else if (timeDiff &lt; 0) {</span>
+<span class="nc" id="L118">                    timeDiff = 0;</span>
+                }
+
+<span class="fc" id="L121">                int absIndexPos =</span>
+                    IndexHeader.INDEX_HEADER_SIZE + this.hashSlotNum * hashSlotSize
+<span class="fc" id="L123">                        + this.indexHeader.getIndexCount() * indexSize;</span>
+
+<span class="fc" id="L125">                this.mappedByteBuffer.putInt(absIndexPos, keyHash);</span>
+<span class="fc" id="L126">                this.mappedByteBuffer.putLong(absIndexPos + 4, phyOffset);</span>
+<span class="fc" id="L127">                this.mappedByteBuffer.putInt(absIndexPos + 4 + 8, (int) timeDiff);</span>
+<span class="fc" id="L128">                this.mappedByteBuffer.putInt(absIndexPos + 4 + 8 + 4, slotValue);</span>
+
+<span class="fc" id="L130">                this.mappedByteBuffer.putInt(absSlotPos, this.indexHeader.getIndexCount());</span>
+
+<span class="fc bfc" id="L132" title="All 2 branches covered.">                if (this.indexHeader.getIndexCount() &lt;= 1) {</span>
+<span class="fc" id="L133">                    this.indexHeader.setBeginPhyOffset(phyOffset);</span>
+<span class="fc" id="L134">                    this.indexHeader.setBeginTimestamp(storeTimestamp);</span>
+                }
+
+<span class="fc bfc" id="L137" title="All 2 branches covered.">                if (invalidIndex == slotValue) {</span>
+<span class="fc" id="L138">                    this.indexHeader.incHashSlotCount();</span>
+                }
+<span class="fc" id="L140">                this.indexHeader.incIndexCount();</span>
+<span class="fc" id="L141">                this.indexHeader.setEndPhyOffset(phyOffset);</span>
+<span class="fc" id="L142">                this.indexHeader.setEndTimestamp(storeTimestamp);</span>
+
+<span class="fc" id="L144">                return true;</span>
+<span class="nc" id="L145">            } catch (Exception e) {</span>
+<span class="nc" id="L146">                log.error(&quot;putKey exception, Key: &quot; + key + &quot; KeyHashCode: &quot; + key.hashCode(), e);</span>
+            } finally {
+<span class="pc bpc" id="L148" title="1 of 2 branches missed.">                if (fileLock != null) {</span>
+                    try {
+<span class="nc" id="L150">                        fileLock.release();</span>
+<span class="nc" id="L151">                    } catch (IOException e) {</span>
+<span class="nc" id="L152">                        log.error(&quot;Failed to release the lock&quot;, e);</span>
+<span class="nc" id="L153">                    }</span>
+                }
+            }
+<span class="nc" id="L156">        } else {</span>
+<span class="fc" id="L157">            log.warn(&quot;Over index file capacity: index count = &quot; + this.indexHeader.getIndexCount()</span>
+                + &quot;; index max num = &quot; + this.indexNum);
+        }
+
+<span class="fc" id="L161">        return false;</span>
+    }
+
+    public int indexKeyHashMethod(final String key) {
+<span class="fc" id="L165">        int keyHash = key.hashCode();</span>
+<span class="fc" id="L166">        int keyHashPositive = Math.abs(keyHash);</span>
+<span class="pc bpc" id="L167" title="1 of 2 branches missed.">        if (keyHashPositive &lt; 0)</span>
+<span class="nc" id="L168">            keyHashPositive = 0;</span>
+<span class="fc" id="L169">        return keyHashPositive;</span>
+    }
+
+    public long getBeginTimestamp() {
+<span class="nc" id="L173">        return this.indexHeader.getBeginTimestamp();</span>
+    }
+
+    public long getEndTimestamp() {
+<span class="fc" id="L177">        return this.indexHeader.getEndTimestamp();</span>
+    }
+
+    public long getEndPhyOffset() {
+<span class="fc" id="L181">        return this.indexHeader.getEndPhyOffset();</span>
+    }
+
+    public boolean isTimeMatched(final long begin, final long end) {
+<span class="nc bnc" id="L185" title="All 4 branches missed.">        boolean result = begin &lt; this.indexHeader.getBeginTimestamp() &amp;&amp; end &gt; this.indexHeader.getEndTimestamp();</span>
+<span class="nc bnc" id="L186" title="All 6 branches missed.">        result = result || (begin &gt;= this.indexHeader.getBeginTimestamp() &amp;&amp; begin &lt;= this.indexHeader.getEndTimestamp());</span>
+<span class="nc bnc" id="L187" title="All 6 branches missed.">        result = result || (end &gt;= this.indexHeader.getBeginTimestamp() &amp;&amp; end &lt;= this.indexHeader.getEndTimestamp());</span>
+<span class="nc" id="L188">        return result;</span>
+    }
+
+    public void selectPhyOffset(final List&lt;Long&gt; phyOffsets, final String key, final int maxNum,
+        final long begin, final long end, boolean lock) {
+<span class="pc bpc" id="L193" title="1 of 2 branches missed.">        if (this.mappedFile.hold()) {</span>
+<span class="fc" id="L194">            int keyHash = indexKeyHashMethod(key);</span>
+<span class="fc" id="L195">            int slotPos = keyHash % this.hashSlotNum;</span>
+<span class="fc" id="L196">            int absSlotPos = IndexHeader.INDEX_HEADER_SIZE + slotPos * hashSlotSize;</span>
+
+<span class="fc" id="L198">            FileLock fileLock = null;</span>
+            try {
+<span class="pc bpc" id="L200" title="1 of 2 branches missed.">                if (lock) {</span>
+                    // fileLock = this.fileChannel.lock(absSlotPos,
+                    // hashSlotSize, true);
+                }
+
+<span class="fc" id="L205">                int slotValue = this.mappedByteBuffer.getInt(absSlotPos);</span>
+                // if (fileLock != null) {
+                // fileLock.release();
+                // fileLock = null;
+                // }
+
+<span class="pc bpc" id="L211" title="2 of 4 branches missed.">                if (slotValue &lt;= invalidIndex || slotValue &gt; this.indexHeader.getIndexCount()</span>
+<span class="pc bpc" id="L212" title="1 of 2 branches missed.">                    || this.indexHeader.getIndexCount() &lt;= 1) {</span>
+                } else {
+<span class="fc" id="L214">                    for (int nextIndexToRead = slotValue; ; ) {</span>
+<span class="pc bpc" id="L215" title="1 of 2 branches missed.">                        if (phyOffsets.size() &gt;= maxNum) {</span>
+<span class="nc" id="L216">                            break;</span>
+                        }
+
+<span class="fc" id="L219">                        int absIndexPos =</span>
+                            IndexHeader.INDEX_HEADER_SIZE + this.hashSlotNum * hashSlotSize
+                                + nextIndexToRead * indexSize;
+
+<span class="fc" id="L223">                        int keyHashRead = this.mappedByteBuffer.getInt(absIndexPos);</span>
+<span class="fc" id="L224">                        long phyOffsetRead = this.mappedByteBuffer.getLong(absIndexPos + 4);</span>
+
+<span class="fc" id="L226">                        long timeDiff = (long) this.mappedByteBuffer.getInt(absIndexPos + 4 + 8);</span>
+<span class="fc" id="L227">                        int prevIndexRead = this.mappedByteBuffer.getInt(absIndexPos + 4 + 8 + 4);</span>
+
+<span class="pc bpc" id="L229" title="1 of 2 branches missed.">                        if (timeDiff &lt; 0) {</span>
+<span class="nc" id="L230">                            break;</span>
+                        }
+
+<span class="fc" id="L233">                        timeDiff *= 1000L;</span>
+
+<span class="fc" id="L235">                        long timeRead = this.indexHeader.getBeginTimestamp() + timeDiff;</span>
+<span class="pc bpc" id="L236" title="2 of 4 branches missed.">                        boolean timeMatched = (timeRead &gt;= begin) &amp;&amp; (timeRead &lt;= end);</span>
+
+<span class="pc bpc" id="L238" title="1 of 4 branches missed.">                        if (keyHash == keyHashRead &amp;&amp; timeMatched) {</span>
+<span class="fc" id="L239">                            phyOffsets.add(phyOffsetRead);</span>
+                        }
+
+<span class="fc bfc" id="L242" title="All 2 branches covered.">                        if (prevIndexRead &lt;= invalidIndex</span>
+<span class="pc bpc" id="L243" title="3 of 6 branches missed.">                            || prevIndexRead &gt; this.indexHeader.getIndexCount()</span>
+                            || prevIndexRead == nextIndexToRead || timeRead &lt; begin) {
+<span class="nc" id="L245">                            break;</span>
+                        }
+
+<span class="fc" id="L248">                        nextIndexToRead = prevIndexRead;</span>
+<span class="fc" id="L249">                    }</span>
+                }
+<span class="nc" id="L251">            } catch (Exception e) {</span>
+<span class="nc" id="L252">                log.error(&quot;selectPhyOffset exception &quot;, e);</span>
+            } finally {
+<span class="pc bpc" id="L254" title="1 of 2 branches missed.">                if (fileLock != null) {</span>
+                    try {
+<span class="nc" id="L256">                        fileLock.release();</span>
+<span class="nc" id="L257">                    } catch (IOException e) {</span>
+<span class="nc" id="L258">                        log.error(&quot;Failed to release the lock&quot;, e);</span>
+<span class="nc" id="L259">                    }</span>
+                }
+
+<span class="fc" id="L262">                this.mappedFile.release();</span>
+            }
+        }
+<span class="fc" id="L265">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.5.201910111838</span></div></body></html>

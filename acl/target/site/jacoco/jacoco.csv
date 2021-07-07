@@ -1,0 +1,20 @@
+GROUP,PACKAGE,CLASS,INSTRUCTION_MISSED,INSTRUCTION_COVERED,BRANCH_MISSED,BRANCH_COVERED,LINE_MISSED,LINE_COVERED,COMPLEXITY_MISSED,COMPLEXITY_COVERED,METHOD_MISSED,METHOD_COVERED
+rocketmq-acl 4.8.0,org.apache.rocketmq.acl.plain,RemoteAddressStrategyFactory.OneRemoteAddressStrategy,0,42,0,4,0,8,0,4,0,2
+rocketmq-acl 4.8.0,org.apache.rocketmq.acl.plain,PlainPermissionManager.new LinkedHashMap() {...},0,25,0,0,0,4,0,1,0,1
+rocketmq-acl 4.8.0,org.apache.rocketmq.acl.plain,PlainPermissionManager.new FileWatchService.Listener() {...},0,13,0,0,0,4,0,2,0,2
+rocketmq-acl 4.8.0,org.apache.rocketmq.acl.plain,PlainAccessResource,45,133,7,9,12,48,12,28,6,26
+rocketmq-acl 4.8.0,org.apache.rocketmq.acl.plain,PlainPermissionManager,131,929,42,86,29,180,41,39,1,15
+rocketmq-acl 4.8.0,org.apache.rocketmq.acl.plain,RemoteAddressStrategyFactory,24,132,2,22,2,26,2,14,0,4
+rocketmq-acl 4.8.0,org.apache.rocketmq.acl.plain,PlainAccessValidator,12,276,2,24,3,62,3,22,1,7
+rocketmq-acl 4.8.0,org.apache.rocketmq.acl.plain,RemoteAddressStrategyFactory.NullRemoteAddressStrategy,0,5,0,0,0,2,0,2,0,2
+rocketmq-acl 4.8.0,org.apache.rocketmq.acl.plain,RemoteAddressStrategyFactory.RangeRemoteAddressStrategy,32,381,7,55,2,70,7,29,0,5
+rocketmq-acl 4.8.0,org.apache.rocketmq.acl.plain,RemoteAddressStrategyFactory.BlankRemoteAddressStrategy,0,5,0,0,0,2,0,2,0,2
+rocketmq-acl 4.8.0,org.apache.rocketmq.acl.plain,RemoteAddressStrategyFactory.MultipleRemoteAddressStrategy,12,66,1,7,1,14,1,5,0,2
+rocketmq-acl 4.8.0,org.apache.rocketmq.acl.common,AclUtils,83,692,14,102,14,146,15,66,1,22
+rocketmq-acl 4.8.0,org.apache.rocketmq.acl.common,AclException,5,48,0,0,2,20,1,8,1,8
+rocketmq-acl 4.8.0,org.apache.rocketmq.acl.common,AclConstants,3,0,0,0,1,0,1,0,1,0
+rocketmq-acl 4.8.0,org.apache.rocketmq.acl.common,Permission,6,152,2,27,1,30,3,19,1,5
+rocketmq-acl 4.8.0,org.apache.rocketmq.acl.common,SigningAlgorithm,0,34,0,0,0,4,0,1,0,1
+rocketmq-acl 4.8.0,org.apache.rocketmq.acl.common,AclClientRPCHook,13,151,2,16,5,30,4,10,2,3
+rocketmq-acl 4.8.0,org.apache.rocketmq.acl.common,SessionCredentials,47,208,23,17,16,56,20,16,1,15
+rocketmq-acl 4.8.0,org.apache.rocketmq.acl.common,AclSigner,31,135,0,0,5,22,1,8,1,8

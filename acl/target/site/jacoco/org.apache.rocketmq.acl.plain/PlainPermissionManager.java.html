@@ -1,0 +1,420 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>PlainPermissionManager.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">rocketmq-acl 4.8.0</a> &gt; <a href="index.source.html" class="el_package">org.apache.rocketmq.acl.plain</a> &gt; <span class="el_source">PlainPermissionManager.java</span></div><h1>PlainPermissionManager.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.rocketmq.acl.plain;
+
+import com.alibaba.fastjson.JSONArray;
+import com.alibaba.fastjson.JSONObject;
+import java.io.File;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.rocketmq.acl.common.AclConstants;
+import org.apache.rocketmq.acl.common.AclException;
+import org.apache.rocketmq.acl.common.AclUtils;
+import org.apache.rocketmq.acl.common.Permission;
+import org.apache.rocketmq.common.AclConfig;
+import org.apache.rocketmq.common.DataVersion;
+import org.apache.rocketmq.common.MixAll;
+import org.apache.rocketmq.common.PlainAccessConfig;
+import org.apache.rocketmq.common.constant.LoggerName;
+import org.apache.rocketmq.logging.InternalLogger;
+import org.apache.rocketmq.logging.InternalLoggerFactory;
+import org.apache.rocketmq.srvutil.FileWatchService;
+
+public class PlainPermissionManager {
+
+<span class="fc" id="L44">    private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.COMMON_LOGGER_NAME);</span>
+
+    private static final String DEFAULT_PLAIN_ACL_FILE = &quot;/conf/plain_acl.yml&quot;;
+
+<span class="fc" id="L48">    private String fileHome = System.getProperty(MixAll.ROCKETMQ_HOME_PROPERTY,</span>
+<span class="fc" id="L49">        System.getenv(MixAll.ROCKETMQ_HOME_ENV));</span>
+
+<span class="fc" id="L51">    private String fileName = System.getProperty(&quot;rocketmq.acl.plain.file&quot;, DEFAULT_PLAIN_ACL_FILE);</span>
+
+<span class="fc" id="L53">    private  Map&lt;String/** AccessKey **/, PlainAccessResource&gt; plainAccessResourceMap = new HashMap&lt;&gt;();</span>
+
+<span class="fc" id="L55">    private  List&lt;RemoteAddressStrategy&gt; globalWhiteRemoteAddressStrategy = new ArrayList&lt;&gt;();</span>
+
+<span class="fc" id="L57">    private RemoteAddressStrategyFactory remoteAddressStrategyFactory = new RemoteAddressStrategyFactory();</span>
+
+    private boolean isWatchStart;
+
+<span class="fc" id="L61">    private final DataVersion dataVersion = new DataVersion();</span>
+
+<span class="fc" id="L63">    public PlainPermissionManager() {</span>
+<span class="fc" id="L64">        load();</span>
+<span class="fc" id="L65">        watch();</span>
+<span class="fc" id="L66">    }</span>
+
+    public void load() {
+
+<span class="fc" id="L70">        Map&lt;String, PlainAccessResource&gt; plainAccessResourceMap = new HashMap&lt;&gt;();</span>
+<span class="fc" id="L71">        List&lt;RemoteAddressStrategy&gt; globalWhiteRemoteAddressStrategy = new ArrayList&lt;&gt;();</span>
+
+<span class="fc" id="L73">        JSONObject plainAclConfData = AclUtils.getYamlDataObject(fileHome + File.separator + fileName,</span>
+            JSONObject.class);
+<span class="pc bpc" id="L75" title="1 of 4 branches missed.">        if (plainAclConfData == null || plainAclConfData.isEmpty()) {</span>
+<span class="fc" id="L76">            throw new AclException(String.format(&quot;%s file is not data&quot;, fileHome + File.separator + fileName));</span>
+        }
+<span class="fc" id="L78">        log.info(&quot;Broker plain acl conf data is : &quot;, plainAclConfData.toString());</span>
+<span class="fc" id="L79">        JSONArray globalWhiteRemoteAddressesList = plainAclConfData.getJSONArray(&quot;globalWhiteRemoteAddresses&quot;);</span>
+<span class="pc bpc" id="L80" title="1 of 4 branches missed.">        if (globalWhiteRemoteAddressesList != null &amp;&amp; !globalWhiteRemoteAddressesList.isEmpty()) {</span>
+<span class="fc bfc" id="L81" title="All 2 branches covered.">            for (int i = 0; i &lt; globalWhiteRemoteAddressesList.size(); i++) {</span>
+<span class="fc" id="L82">                globalWhiteRemoteAddressStrategy.add(remoteAddressStrategyFactory.</span>
+<span class="fc" id="L83">                        getRemoteAddressStrategy(globalWhiteRemoteAddressesList.getString(i)));</span>
+            }
+        }
+
+<span class="fc" id="L87">        JSONArray accounts = plainAclConfData.getJSONArray(AclConstants.CONFIG_ACCOUNTS);</span>
+<span class="pc bpc" id="L88" title="1 of 4 branches missed.">        if (accounts != null &amp;&amp; !accounts.isEmpty()) {</span>
+<span class="fc" id="L89">            List&lt;PlainAccessConfig&gt; plainAccessConfigList = accounts.toJavaList(PlainAccessConfig.class);</span>
+<span class="fc bfc" id="L90" title="All 2 branches covered.">            for (PlainAccessConfig plainAccessConfig : plainAccessConfigList) {</span>
+<span class="fc" id="L91">                PlainAccessResource plainAccessResource = buildPlainAccessResource(plainAccessConfig);</span>
+<span class="fc" id="L92">                plainAccessResourceMap.put(plainAccessResource.getAccessKey(),plainAccessResource);</span>
+<span class="fc" id="L93">            }</span>
+        }
+
+        // For loading dataversion part just
+<span class="fc" id="L97">        JSONArray tempDataVersion = plainAclConfData.getJSONArray(AclConstants.CONFIG_DATA_VERSION);</span>
+<span class="pc bpc" id="L98" title="3 of 4 branches missed.">        if (tempDataVersion != null &amp;&amp; !tempDataVersion.isEmpty()) {</span>
+<span class="nc" id="L99">            List&lt;DataVersion&gt; dataVersion = tempDataVersion.toJavaList(DataVersion.class);</span>
+<span class="nc" id="L100">            DataVersion firstElement = dataVersion.get(0);</span>
+<span class="nc" id="L101">            this.dataVersion.assignNewOne(firstElement);</span>
+        }
+
+<span class="fc" id="L104">        this.globalWhiteRemoteAddressStrategy = globalWhiteRemoteAddressStrategy;</span>
+<span class="fc" id="L105">        this.plainAccessResourceMap = plainAccessResourceMap;</span>
+<span class="fc" id="L106">    }</span>
+
+    public String getAclConfigDataVersion() {
+<span class="nc" id="L109">        return this.dataVersion.toJson();</span>
+    }
+
+    private Map&lt;String, Object&gt; updateAclConfigFileVersion(Map&lt;String, Object&gt; updateAclConfigMap) {
+
+<span class="fc" id="L114">        dataVersion.nextVersion();</span>
+<span class="fc" id="L115">        List&lt;Map&lt;String, Object&gt;&gt; versionElement = new ArrayList&lt;Map&lt;String, Object&gt;&gt;();</span>
+<span class="fc" id="L116">        Map&lt;String, Object&gt; accountsMap = new LinkedHashMap&lt;String, Object&gt;() {</span>
+            {
+<span class="fc" id="L118">                put(AclConstants.CONFIG_COUNTER, dataVersion.getCounter().longValue());</span>
+<span class="fc" id="L119">                put(AclConstants.CONFIG_TIME_STAMP, dataVersion.getTimestamp());</span>
+<span class="fc" id="L120">            }</span>
+        };
+<span class="fc" id="L122">        versionElement.add(accountsMap);</span>
+<span class="fc" id="L123">        updateAclConfigMap.put(AclConstants.CONFIG_DATA_VERSION, versionElement);</span>
+<span class="fc" id="L124">        return updateAclConfigMap;</span>
+    }
+
+    public boolean updateAccessConfig(PlainAccessConfig plainAccessConfig) {
+
+<span class="pc bpc" id="L129" title="1 of 2 branches missed.">        if (plainAccessConfig == null) {</span>
+<span class="nc" id="L130">            log.error(&quot;Parameter value plainAccessConfig is null,Please check your parameter&quot;);</span>
+<span class="nc" id="L131">            return false;</span>
+        }
+
+<span class="fc" id="L134">        Map&lt;String, Object&gt; aclAccessConfigMap = AclUtils.getYamlDataObject(fileHome + File.separator + fileName,</span>
+            Map.class);
+
+<span class="fc" id="L137">        List&lt;Map&lt;String, Object&gt;&gt; accounts = (List&lt;Map&lt;String, Object&gt;&gt;) aclAccessConfigMap.get(AclConstants.CONFIG_ACCOUNTS);</span>
+<span class="fc" id="L138">        Map&lt;String, Object&gt; updateAccountMap = null;</span>
+<span class="fc bfc" id="L139" title="All 2 branches covered.">        if (accounts != null) {</span>
+<span class="fc bfc" id="L140" title="All 2 branches covered.">            for (Map&lt;String, Object&gt; account : accounts) {</span>
+<span class="fc bfc" id="L141" title="All 2 branches covered.">                if (account.get(AclConstants.CONFIG_ACCESS_KEY).equals(plainAccessConfig.getAccessKey())) {</span>
+                    // Update acl access config elements
+<span class="fc" id="L143">                    accounts.remove(account);</span>
+<span class="fc" id="L144">                    updateAccountMap = createAclAccessConfigMap(account, plainAccessConfig);</span>
+<span class="fc" id="L145">                    accounts.add(updateAccountMap);</span>
+<span class="fc" id="L146">                    aclAccessConfigMap.put(AclConstants.CONFIG_ACCOUNTS, accounts);</span>
+
+<span class="pc bpc" id="L148" title="1 of 2 branches missed.">                    if (AclUtils.writeDataObject(fileHome + File.separator + fileName, updateAclConfigFileVersion(aclAccessConfigMap))) {</span>
+<span class="fc" id="L149">                        return true;</span>
+                    }
+<span class="nc" id="L151">                    return false;</span>
+                }
+<span class="fc" id="L153">            }</span>
+            // Create acl access config elements
+<span class="fc" id="L155">            accounts.add(createAclAccessConfigMap(null, plainAccessConfig));</span>
+<span class="fc" id="L156">            aclAccessConfigMap.put(AclConstants.CONFIG_ACCOUNTS, accounts);</span>
+<span class="pc bpc" id="L157" title="1 of 2 branches missed.">            if (AclUtils.writeDataObject(fileHome + File.separator + fileName, updateAclConfigFileVersion(aclAccessConfigMap))) {</span>
+<span class="fc" id="L158">                return true;</span>
+            }
+<span class="nc" id="L160">            return false;</span>
+        }
+
+<span class="fc" id="L163">        log.error(&quot;Users must ensure that the acl yaml config file has accounts node element&quot;);</span>
+<span class="fc" id="L164">        return false;</span>
+    }
+
+    private Map&lt;String, Object&gt; createAclAccessConfigMap(Map&lt;String, Object&gt; existedAccountMap, PlainAccessConfig plainAccessConfig) {
+        
+<span class="fc" id="L169">        Map&lt;String, Object&gt; newAccountsMap = null;</span>
+<span class="fc bfc" id="L170" title="All 2 branches covered.">        if (existedAccountMap == null) {</span>
+<span class="fc" id="L171">            newAccountsMap = new LinkedHashMap&lt;String, Object&gt;();</span>
+        } else {
+<span class="fc" id="L173">            newAccountsMap = existedAccountMap;</span>
+        }
+
+<span class="pc bpc" id="L176" title="1 of 2 branches missed.">        if (StringUtils.isEmpty(plainAccessConfig.getAccessKey()) ||</span>
+<span class="pc bpc" id="L177" title="1 of 2 branches missed.">            plainAccessConfig.getAccessKey().length() &lt;= AclConstants.ACCESS_KEY_MIN_LENGTH) {</span>
+<span class="nc" id="L178">            throw new AclException(String.format(</span>
+                    &quot;The accessKey=%s cannot be null and length should longer than 6&quot;,
+<span class="nc" id="L180">                    plainAccessConfig.getAccessKey()));</span>
+        }
+<span class="fc" id="L182">        newAccountsMap.put(AclConstants.CONFIG_ACCESS_KEY, plainAccessConfig.getAccessKey());</span>
+
+<span class="pc bpc" id="L184" title="1 of 2 branches missed.">        if (!StringUtils.isEmpty(plainAccessConfig.getSecretKey())) {</span>
+<span class="fc bfc" id="L185" title="All 2 branches covered.">            if (plainAccessConfig.getSecretKey().length() &lt;= AclConstants.SECRET_KEY_MIN_LENGTH) {</span>
+<span class="fc" id="L186">                throw new AclException(String.format(</span>
+                    &quot;The secretKey=%s value length should longer than 6&quot;,
+<span class="fc" id="L188">                    plainAccessConfig.getSecretKey()));</span>
+            }
+<span class="fc" id="L190">            newAccountsMap.put(AclConstants.CONFIG_SECRET_KEY, (String) plainAccessConfig.getSecretKey());</span>
+        }
+<span class="pc bpc" id="L192" title="1 of 2 branches missed.">        if (!StringUtils.isEmpty(plainAccessConfig.getWhiteRemoteAddress())) {</span>
+<span class="nc" id="L193">            newAccountsMap.put(AclConstants.CONFIG_WHITE_ADDR, plainAccessConfig.getWhiteRemoteAddress());</span>
+        }
+<span class="pc bpc" id="L195" title="1 of 2 branches missed.">        if (!StringUtils.isEmpty(String.valueOf(plainAccessConfig.isAdmin()))) {</span>
+<span class="fc" id="L196">            newAccountsMap.put(AclConstants.CONFIG_ADMIN_ROLE, plainAccessConfig.isAdmin());</span>
+        }
+<span class="fc bfc" id="L198" title="All 2 branches covered.">        if (!StringUtils.isEmpty(plainAccessConfig.getDefaultTopicPerm())) {</span>
+<span class="fc" id="L199">            newAccountsMap.put(AclConstants.CONFIG_DEFAULT_TOPIC_PERM, plainAccessConfig.getDefaultTopicPerm());</span>
+        }
+<span class="fc bfc" id="L201" title="All 2 branches covered.">        if (!StringUtils.isEmpty(plainAccessConfig.getDefaultGroupPerm())) {</span>
+<span class="fc" id="L202">            newAccountsMap.put(AclConstants.CONFIG_DEFAULT_GROUP_PERM, plainAccessConfig.getDefaultGroupPerm());</span>
+        }
+<span class="pc bpc" id="L204" title="1 of 4 branches missed.">        if (plainAccessConfig.getTopicPerms() != null &amp;&amp; !plainAccessConfig.getTopicPerms().isEmpty()) {</span>
+<span class="fc" id="L205">            newAccountsMap.put(AclConstants.CONFIG_TOPIC_PERMS, plainAccessConfig.getTopicPerms());</span>
+        }
+<span class="pc bpc" id="L207" title="1 of 4 branches missed.">        if (plainAccessConfig.getGroupPerms() != null &amp;&amp; !plainAccessConfig.getGroupPerms().isEmpty()) {</span>
+<span class="fc" id="L208">            newAccountsMap.put(AclConstants.CONFIG_GROUP_PERMS, plainAccessConfig.getGroupPerms());</span>
+        }
+
+<span class="fc" id="L211">        return newAccountsMap;</span>
+    }
+
+    public boolean deleteAccessConfig(String accesskey) {
+<span class="pc bpc" id="L215" title="1 of 2 branches missed.">        if (StringUtils.isEmpty(accesskey)) {</span>
+<span class="nc" id="L216">            log.error(&quot;Parameter value accesskey is null or empty String,Please check your parameter&quot;);</span>
+<span class="nc" id="L217">            return false;</span>
+        }
+
+<span class="fc" id="L220">        Map&lt;String, Object&gt; aclAccessConfigMap = AclUtils.getYamlDataObject(fileHome + File.separator + fileName,</span>
+                    Map.class);
+
+<span class="fc" id="L223">        List&lt;Map&lt;String, Object&gt;&gt; accounts = (List&lt;Map&lt;String, Object&gt;&gt;) aclAccessConfigMap.get(&quot;accounts&quot;);</span>
+<span class="pc bpc" id="L224" title="1 of 2 branches missed.">        if (accounts != null) {</span>
+<span class="fc" id="L225">            Iterator&lt;Map&lt;String, Object&gt;&gt; itemIterator = accounts.iterator();</span>
+<span class="pc bpc" id="L226" title="1 of 2 branches missed.">            while (itemIterator.hasNext()) {</span>
+
+<span class="fc bfc" id="L228" title="All 2 branches covered.">                if (itemIterator.next().get(AclConstants.CONFIG_ACCESS_KEY).equals(accesskey)) {</span>
+                    // Delete the related acl config element
+<span class="fc" id="L230">                    itemIterator.remove();</span>
+<span class="fc" id="L231">                    aclAccessConfigMap.put(AclConstants.CONFIG_ACCOUNTS, accounts);</span>
+
+<span class="pc bpc" id="L233" title="1 of 2 branches missed.">                    if (AclUtils.writeDataObject(fileHome + File.separator + fileName, updateAclConfigFileVersion(aclAccessConfigMap))) {</span>
+<span class="fc" id="L234">                        return true;</span>
+                    }
+<span class="nc" id="L236">                    return false;</span>
+                }
+            }
+        }
+<span class="nc" id="L240">        log.error(&quot;Users must ensure that the acl yaml config file has related acl config elements&quot;);</span>
+
+<span class="nc" id="L242">        return false;</span>
+    }
+
+    public boolean updateGlobalWhiteAddrsConfig(List&lt;String&gt; globalWhiteAddrsList) {
+
+<span class="pc bpc" id="L247" title="1 of 2 branches missed.">        if (globalWhiteAddrsList == null) {</span>
+<span class="nc" id="L248">            log.error(&quot;Parameter value globalWhiteAddrsList is null,Please check your parameter&quot;);</span>
+<span class="nc" id="L249">            return false;</span>
+        }
+
+<span class="fc" id="L252">        Map&lt;String, Object&gt; aclAccessConfigMap = AclUtils.getYamlDataObject(fileHome + File.separator + fileName,</span>
+            Map.class);
+
+<span class="fc" id="L255">        List&lt;String&gt; globalWhiteRemoteAddrList = (List&lt;String&gt;) aclAccessConfigMap.get(AclConstants.CONFIG_GLOBAL_WHITE_ADDRS);</span>
+
+<span class="pc bpc" id="L257" title="1 of 2 branches missed.">        if (globalWhiteRemoteAddrList != null) {</span>
+<span class="fc" id="L258">            globalWhiteRemoteAddrList.clear();</span>
+<span class="fc" id="L259">            globalWhiteRemoteAddrList.addAll(globalWhiteAddrsList);</span>
+
+            // Update globalWhiteRemoteAddr element in memeory map firstly
+<span class="fc" id="L262">            aclAccessConfigMap.put(AclConstants.CONFIG_GLOBAL_WHITE_ADDRS,globalWhiteRemoteAddrList);</span>
+<span class="pc bpc" id="L263" title="1 of 2 branches missed.">            if (AclUtils.writeDataObject(fileHome + File.separator + fileName, updateAclConfigFileVersion(aclAccessConfigMap))) {</span>
+<span class="fc" id="L264">                return true;</span>
+            }
+<span class="nc" id="L266">            return false;</span>
+        }
+
+<span class="nc" id="L269">        log.error(&quot;Users must ensure that the acl yaml config file has globalWhiteRemoteAddresses flag firstly&quot;);</span>
+<span class="nc" id="L270">        return false;</span>
+    }
+
+    public AclConfig getAllAclConfig() {
+<span class="fc" id="L274">        AclConfig aclConfig = new AclConfig();</span>
+<span class="fc" id="L275">        List&lt;PlainAccessConfig&gt; configs = new ArrayList&lt;&gt;();</span>
+<span class="fc" id="L276">        List&lt;String&gt; whiteAddrs = new ArrayList&lt;&gt;();</span>
+<span class="fc" id="L277">        JSONObject plainAclConfData = AclUtils.getYamlDataObject(fileHome + File.separator + fileName,</span>
+                JSONObject.class);
+<span class="pc bpc" id="L279" title="2 of 4 branches missed.">        if (plainAclConfData == null || plainAclConfData.isEmpty()) {</span>
+<span class="nc" id="L280">            throw new AclException(String.format(&quot;%s file is not data&quot;, fileHome + File.separator + fileName));</span>
+        }
+<span class="fc" id="L282">        JSONArray globalWhiteAddrs = plainAclConfData.getJSONArray(AclConstants.CONFIG_GLOBAL_WHITE_ADDRS);</span>
+<span class="pc bpc" id="L283" title="2 of 4 branches missed.">        if (globalWhiteAddrs != null &amp;&amp; !globalWhiteAddrs.isEmpty()) {</span>
+<span class="fc" id="L284">            whiteAddrs = globalWhiteAddrs.toJavaList(String.class);</span>
+        }
+<span class="fc" id="L286">        JSONArray accounts = plainAclConfData.getJSONArray(AclConstants.CONFIG_ACCOUNTS);</span>
+<span class="pc bpc" id="L287" title="2 of 4 branches missed.">        if (accounts != null &amp;&amp; !accounts.isEmpty()) {</span>
+<span class="fc" id="L288">            configs = accounts.toJavaList(PlainAccessConfig.class);</span>
+        }
+<span class="fc" id="L290">        aclConfig.setGlobalWhiteAddrs(whiteAddrs);</span>
+<span class="fc" id="L291">        aclConfig.setPlainAccessConfigs(configs);</span>
+<span class="fc" id="L292">        return aclConfig;</span>
+    }
+
+    private void watch() {
+        try {
+<span class="fc" id="L297">            String watchFilePath = fileHome + fileName;</span>
+<span class="fc" id="L298">            FileWatchService fileWatchService = new FileWatchService(new String[] {watchFilePath}, new FileWatchService.Listener() {</span>
+                @Override
+                public void onChanged(String path) {
+<span class="fc" id="L301">                    log.info(&quot;The plain acl yml changed, reload the context&quot;);</span>
+<span class="fc" id="L302">                    load();</span>
+<span class="fc" id="L303">                }</span>
+            });
+<span class="fc" id="L305">            fileWatchService.start();</span>
+<span class="fc" id="L306">            log.info(&quot;Succeed to start AclWatcherService&quot;);</span>
+<span class="fc" id="L307">            this.isWatchStart = true;</span>
+<span class="nc" id="L308">        } catch (Exception e) {</span>
+<span class="nc" id="L309">            log.error(&quot;Failed to start AclWatcherService&quot;, e);</span>
+<span class="fc" id="L310">        }</span>
+<span class="fc" id="L311">    }</span>
+
+    void checkPerm(PlainAccessResource needCheckedAccess, PlainAccessResource ownedAccess) {
+<span class="pc bpc" id="L314" title="1 of 4 branches missed.">        if (Permission.needAdminPerm(needCheckedAccess.getRequestCode()) &amp;&amp; !ownedAccess.isAdmin()) {</span>
+<span class="fc" id="L315">            throw new AclException(String.format(&quot;Need admin permission for request code=%d, but accessKey=%s is not&quot;, needCheckedAccess.getRequestCode(), ownedAccess.getAccessKey()));</span>
+        }
+<span class="fc" id="L317">        Map&lt;String, Byte&gt; needCheckedPermMap = needCheckedAccess.getResourcePermMap();</span>
+<span class="fc" id="L318">        Map&lt;String, Byte&gt; ownedPermMap = ownedAccess.getResourcePermMap();</span>
+
+<span class="pc bpc" id="L320" title="1 of 2 branches missed.">        if (needCheckedPermMap == null) {</span>
+            // If the needCheckedPermMap is null,then return
+<span class="nc" id="L322">            return;</span>
+        }
+
+<span class="pc bpc" id="L325" title="3 of 4 branches missed.">        if (ownedPermMap == null &amp;&amp; ownedAccess.isAdmin()) {</span>
+            // If the ownedPermMap is null and it is an admin user, then return
+<span class="nc" id="L327">            return;</span>
+        }
+
+<span class="fc bfc" id="L330" title="All 2 branches covered.">        for (Map.Entry&lt;String, Byte&gt; needCheckedEntry : needCheckedPermMap.entrySet()) {</span>
+<span class="fc" id="L331">            String resource = needCheckedEntry.getKey();</span>
+<span class="fc" id="L332">            Byte neededPerm = needCheckedEntry.getValue();</span>
+<span class="fc" id="L333">            boolean isGroup = PlainAccessResource.isRetryTopic(resource);</span>
+
+<span class="pc bpc" id="L335" title="1 of 4 branches missed.">            if (ownedPermMap == null || !ownedPermMap.containsKey(resource)) {</span>
+                // Check the default perm
+<span class="pc bpc" id="L337" title="1 of 2 branches missed.">                byte ownedPerm = isGroup ? ownedAccess.getDefaultGroupPerm() :</span>
+<span class="fc" id="L338">                    ownedAccess.getDefaultTopicPerm();</span>
+<span class="pc bpc" id="L339" title="1 of 2 branches missed.">                if (!Permission.checkPermission(neededPerm, ownedPerm)) {</span>
+<span class="fc" id="L340">                    throw new AclException(String.format(&quot;No default permission for %s&quot;, PlainAccessResource.printStr(resource, isGroup)));</span>
+                }
+                continue;
+            }
+<span class="pc bpc" id="L344" title="1 of 2 branches missed.">            if (!Permission.checkPermission(neededPerm, ownedPermMap.get(resource))) {</span>
+<span class="nc" id="L345">                throw new AclException(String.format(&quot;No default permission for %s&quot;, PlainAccessResource.printStr(resource, isGroup)));</span>
+            }
+<span class="fc" id="L347">        }</span>
+<span class="fc" id="L348">    }</span>
+
+    void clearPermissionInfo() {
+<span class="fc" id="L351">        this.plainAccessResourceMap.clear();</span>
+<span class="fc" id="L352">        this.globalWhiteRemoteAddressStrategy.clear();</span>
+<span class="fc" id="L353">    }</span>
+
+    public PlainAccessResource buildPlainAccessResource(PlainAccessConfig plainAccessConfig) throws AclException {
+<span class="fc bfc" id="L356" title="All 2 branches covered.">        if (plainAccessConfig.getAccessKey() == null</span>
+<span class="fc bfc" id="L357" title="All 2 branches covered.">            || plainAccessConfig.getSecretKey() == null</span>
+<span class="pc bpc" id="L358" title="1 of 2 branches missed.">            || plainAccessConfig.getAccessKey().length() &lt;= AclConstants.ACCESS_KEY_MIN_LENGTH</span>
+<span class="pc bpc" id="L359" title="1 of 2 branches missed.">            || plainAccessConfig.getSecretKey().length() &lt;= AclConstants.SECRET_KEY_MIN_LENGTH) {</span>
+<span class="fc" id="L360">            throw new AclException(String.format(</span>
+                &quot;The accessKey=%s and secretKey=%s cannot be null and length should longer than 6&quot;,
+<span class="fc" id="L362">                    plainAccessConfig.getAccessKey(), plainAccessConfig.getSecretKey()));</span>
+        }
+<span class="fc" id="L364">        PlainAccessResource plainAccessResource = new PlainAccessResource();</span>
+<span class="fc" id="L365">        plainAccessResource.setAccessKey(plainAccessConfig.getAccessKey());</span>
+<span class="fc" id="L366">        plainAccessResource.setSecretKey(plainAccessConfig.getSecretKey());</span>
+<span class="fc" id="L367">        plainAccessResource.setWhiteRemoteAddress(plainAccessConfig.getWhiteRemoteAddress());</span>
+
+<span class="fc" id="L369">        plainAccessResource.setAdmin(plainAccessConfig.isAdmin());</span>
+
+<span class="fc" id="L371">        plainAccessResource.setDefaultGroupPerm(Permission.parsePermFromString(plainAccessConfig.getDefaultGroupPerm()));</span>
+<span class="fc" id="L372">        plainAccessResource.setDefaultTopicPerm(Permission.parsePermFromString(plainAccessConfig.getDefaultTopicPerm()));</span>
+
+<span class="fc" id="L374">        Permission.parseResourcePerms(plainAccessResource, false, plainAccessConfig.getGroupPerms());</span>
+<span class="fc" id="L375">        Permission.parseResourcePerms(plainAccessResource, true, plainAccessConfig.getTopicPerms());</span>
+
+<span class="fc" id="L377">        plainAccessResource.setRemoteAddressStrategy(remoteAddressStrategyFactory.</span>
+<span class="fc" id="L378">                getRemoteAddressStrategy(plainAccessResource.getWhiteRemoteAddress()));</span>
+
+<span class="fc" id="L380">        return plainAccessResource;</span>
+    }
+
+    public void validate(PlainAccessResource plainAccessResource) {
+
+        // Check the global white remote addr
+<span class="fc bfc" id="L386" title="All 2 branches covered.">        for (RemoteAddressStrategy remoteAddressStrategy : globalWhiteRemoteAddressStrategy) {</span>
+<span class="fc bfc" id="L387" title="All 2 branches covered.">            if (remoteAddressStrategy.match(plainAccessResource)) {</span>
+<span class="fc" id="L388">                return;</span>
+            }
+<span class="fc" id="L390">        }</span>
+
+<span class="pc bpc" id="L392" title="1 of 2 branches missed.">        if (plainAccessResource.getAccessKey() == null) {</span>
+<span class="nc" id="L393">            throw new AclException(String.format(&quot;No accessKey is configured&quot;));</span>
+        }
+
+<span class="fc bfc" id="L396" title="All 2 branches covered.">        if (!plainAccessResourceMap.containsKey(plainAccessResource.getAccessKey())) {</span>
+<span class="fc" id="L397">            throw new AclException(String.format(&quot;No acl config for %s&quot;, plainAccessResource.getAccessKey()));</span>
+        }
+
+        // Check the white addr for accesskey
+<span class="fc" id="L401">        PlainAccessResource ownedAccess = plainAccessResourceMap.get(plainAccessResource.getAccessKey());</span>
+<span class="pc bpc" id="L402" title="1 of 2 branches missed.">        if (ownedAccess.getRemoteAddressStrategy().match(plainAccessResource)) {</span>
+<span class="nc" id="L403">            return;</span>
+        }
+
+        // Check the signature
+<span class="fc" id="L407">        String signature = AclUtils.calSignature(plainAccessResource.getContent(), ownedAccess.getSecretKey());</span>
+<span class="fc bfc" id="L408" title="All 2 branches covered.">        if (!signature.equals(plainAccessResource.getSignature())) {</span>
+<span class="fc" id="L409">            throw new AclException(String.format(&quot;Check signature failed for accessKey=%s&quot;, plainAccessResource.getAccessKey()));</span>
+        }
+        // Check perm of each resource
+
+<span class="fc" id="L413">        checkPerm(plainAccessResource, ownedAccess);</span>
+<span class="fc" id="L414">    }</span>
+
+    public boolean isWatchStart() {
+<span class="fc" id="L417">        return isWatchStart;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.5.201910111838</span></div></body></html>

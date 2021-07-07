@@ -1,0 +1,14 @@
+GROUP,PACKAGE,CLASS,INSTRUCTION_MISSED,INSTRUCTION_COVERED,BRANCH_MISSED,BRANCH_COVERED,LINE_MISSED,LINE_COVERED,COMPLEXITY_MISSED,COMPLEXITY_COVERED,METHOD_MISSED,METHOD_COVERED
+rocketmq-namesrv 4.8.0,org.apache.rocketmq.namesrv.routeinfo,RouteInfoManager,845,797,143,59,233,203,97,27,6,17
+rocketmq-namesrv 4.8.0,org.apache.rocketmq.namesrv.routeinfo,BrokerHousekeepingService,8,24,0,0,3,8,2,4,2,4
+rocketmq-namesrv 4.8.0,org.apache.rocketmq.namesrv.routeinfo,BrokerLiveInfo,28,42,0,0,12,7,8,2,8,2
+rocketmq-namesrv 4.8.0,org.apache.rocketmq.namesrv.processor,DefaultRequestProcessor,727,295,47,13,203,88,49,15,16,9
+rocketmq-namesrv 4.8.0,org.apache.rocketmq.namesrv.processor,ClusterTestRequestProcessor,38,79,2,2,14,21,2,3,0,3
+rocketmq-namesrv 4.8.0,org.apache.rocketmq.namesrv,NamesrvController,30,185,4,4,8,38,8,9,4,9
+rocketmq-namesrv 4.8.0,org.apache.rocketmq.namesrv,NamesrvStartup.new Callable() {...},11,0,0,0,3,0,2,0,2,0
+rocketmq-namesrv 4.8.0,org.apache.rocketmq.namesrv,NamesrvController.new Runnable() {...},5,6,0,0,2,1,1,1,1,1
+rocketmq-namesrv 4.8.0,org.apache.rocketmq.namesrv,NamesrvController.new FileWatchService.Listener() {...},47,9,10,0,14,2,7,1,2,1
+rocketmq-namesrv 4.8.0,org.apache.rocketmq.namesrv,NamesrvStartup,280,0,14,0,74,0,16,0,9,0
+rocketmq-namesrv 4.8.0,org.apache.rocketmq.namesrv,NamesrvController.new Runnable() {...},5,6,0,0,2,1,1,1,1,1
+rocketmq-namesrv 4.8.0,org.apache.rocketmq.namesrv.kvconfig,KVConfigManager,135,241,9,11,35,63,8,11,1,8
+rocketmq-namesrv 4.8.0,org.apache.rocketmq.namesrv.kvconfig,KVConfigSerializeWrapper,0,10,0,0,0,4,0,3,0,3

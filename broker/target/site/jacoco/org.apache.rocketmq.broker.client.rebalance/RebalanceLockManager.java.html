@@ -1,0 +1,267 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>RebalanceLockManager.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">rocketmq-broker 4.8.0</a> &gt; <a href="index.source.html" class="el_package">org.apache.rocketmq.broker.client.rebalance</a> &gt; <span class="el_source">RebalanceLockManager.java</span></div><h1>RebalanceLockManager.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.rocketmq.broker.client.rebalance;
+
+import java.util.HashSet;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
+import org.apache.rocketmq.common.constant.LoggerName;
+import org.apache.rocketmq.logging.InternalLogger;
+import org.apache.rocketmq.logging.InternalLoggerFactory;
+import org.apache.rocketmq.common.message.MessageQueue;
+
+<span class="fc" id="L30">public class RebalanceLockManager {</span>
+<span class="fc" id="L31">    private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.REBALANCE_LOCK_LOGGER_NAME);</span>
+<span class="fc" id="L32">    private final static long REBALANCE_LOCK_MAX_LIVE_TIME = Long.parseLong(System.getProperty(</span>
+        &quot;rocketmq.broker.rebalance.lockMaxLiveTime&quot;, &quot;60000&quot;));
+<span class="fc" id="L34">    private final Lock lock = new ReentrantLock();</span>
+<span class="fc" id="L35">    private final ConcurrentMap&lt;String/* group */, ConcurrentHashMap&lt;MessageQueue, LockEntry&gt;&gt; mqLockTable =</span>
+        new ConcurrentHashMap&lt;String, ConcurrentHashMap&lt;MessageQueue, LockEntry&gt;&gt;(1024);
+
+    public boolean tryLock(final String group, final MessageQueue mq, final String clientId) {
+
+<span class="nc bnc" id="L40" title="All 2 branches missed.">        if (!this.isLocked(group, mq, clientId)) {</span>
+            try {
+<span class="nc" id="L42">                this.lock.lockInterruptibly();</span>
+                try {
+<span class="nc" id="L44">                    ConcurrentHashMap&lt;MessageQueue, LockEntry&gt; groupValue = this.mqLockTable.get(group);</span>
+<span class="nc bnc" id="L45" title="All 2 branches missed.">                    if (null == groupValue) {</span>
+<span class="nc" id="L46">                        groupValue = new ConcurrentHashMap&lt;&gt;(32);</span>
+<span class="nc" id="L47">                        this.mqLockTable.put(group, groupValue);</span>
+                    }
+
+<span class="nc" id="L50">                    LockEntry lockEntry = groupValue.get(mq);</span>
+<span class="nc bnc" id="L51" title="All 2 branches missed.">                    if (null == lockEntry) {</span>
+<span class="nc" id="L52">                        lockEntry = new LockEntry();</span>
+<span class="nc" id="L53">                        lockEntry.setClientId(clientId);</span>
+<span class="nc" id="L54">                        groupValue.put(mq, lockEntry);</span>
+<span class="nc" id="L55">                        log.info(&quot;tryLock, message queue not locked, I got it. Group: {} NewClientId: {} {}&quot;,</span>
+                            group,
+                            clientId,
+                            mq);
+                    }
+
+<span class="nc bnc" id="L61" title="All 2 branches missed.">                    if (lockEntry.isLocked(clientId)) {</span>
+<span class="nc" id="L62">                        lockEntry.setLastUpdateTimestamp(System.currentTimeMillis());</span>
+<span class="nc" id="L63">                        return true;</span>
+                    }
+
+<span class="nc" id="L66">                    String oldClientId = lockEntry.getClientId();</span>
+
+<span class="nc bnc" id="L68" title="All 2 branches missed.">                    if (lockEntry.isExpired()) {</span>
+<span class="nc" id="L69">                        lockEntry.setClientId(clientId);</span>
+<span class="nc" id="L70">                        lockEntry.setLastUpdateTimestamp(System.currentTimeMillis());</span>
+<span class="nc" id="L71">                        log.warn(</span>
+                            &quot;tryLock, message queue lock expired, I got it. Group: {} OldClientId: {} NewClientId: {} {}&quot;,
+                            group,
+                            oldClientId,
+                            clientId,
+                            mq);
+<span class="nc" id="L77">                        return true;</span>
+                    }
+
+<span class="nc" id="L80">                    log.warn(</span>
+                        &quot;tryLock, message queue locked by other client. Group: {} OtherClientId: {} NewClientId: {} {}&quot;,
+                        group,
+                        oldClientId,
+                        clientId,
+                        mq);
+<span class="nc" id="L86">                    return false;</span>
+                } finally {
+<span class="nc" id="L88">                    this.lock.unlock();</span>
+                }
+<span class="nc" id="L90">            } catch (InterruptedException e) {</span>
+<span class="nc" id="L91">                log.error(&quot;putMessage exception&quot;, e);</span>
+            }
+        } else {
+
+        }
+
+<span class="nc" id="L97">        return true;</span>
+    }
+
+    private boolean isLocked(final String group, final MessageQueue mq, final String clientId) {
+<span class="nc" id="L101">        ConcurrentHashMap&lt;MessageQueue, LockEntry&gt; groupValue = this.mqLockTable.get(group);</span>
+<span class="nc bnc" id="L102" title="All 2 branches missed.">        if (groupValue != null) {</span>
+<span class="nc" id="L103">            LockEntry lockEntry = groupValue.get(mq);</span>
+<span class="nc bnc" id="L104" title="All 2 branches missed.">            if (lockEntry != null) {</span>
+<span class="nc" id="L105">                boolean locked = lockEntry.isLocked(clientId);</span>
+<span class="nc bnc" id="L106" title="All 2 branches missed.">                if (locked) {</span>
+<span class="nc" id="L107">                    lockEntry.setLastUpdateTimestamp(System.currentTimeMillis());</span>
+                }
+
+<span class="nc" id="L110">                return locked;</span>
+            }
+        }
+
+<span class="nc" id="L114">        return false;</span>
+    }
+
+    public Set&lt;MessageQueue&gt; tryLockBatch(final String group, final Set&lt;MessageQueue&gt; mqs,
+        final String clientId) {
+<span class="nc" id="L119">        Set&lt;MessageQueue&gt; lockedMqs = new HashSet&lt;MessageQueue&gt;(mqs.size());</span>
+<span class="nc" id="L120">        Set&lt;MessageQueue&gt; notLockedMqs = new HashSet&lt;MessageQueue&gt;(mqs.size());</span>
+
+<span class="nc bnc" id="L122" title="All 2 branches missed.">        for (MessageQueue mq : mqs) {</span>
+<span class="nc bnc" id="L123" title="All 2 branches missed.">            if (this.isLocked(group, mq, clientId)) {</span>
+<span class="nc" id="L124">                lockedMqs.add(mq);</span>
+            } else {
+<span class="nc" id="L126">                notLockedMqs.add(mq);</span>
+            }
+<span class="nc" id="L128">        }</span>
+
+<span class="nc bnc" id="L130" title="All 2 branches missed.">        if (!notLockedMqs.isEmpty()) {</span>
+            try {
+<span class="nc" id="L132">                this.lock.lockInterruptibly();</span>
+                try {
+<span class="nc" id="L134">                    ConcurrentHashMap&lt;MessageQueue, LockEntry&gt; groupValue = this.mqLockTable.get(group);</span>
+<span class="nc bnc" id="L135" title="All 2 branches missed.">                    if (null == groupValue) {</span>
+<span class="nc" id="L136">                        groupValue = new ConcurrentHashMap&lt;&gt;(32);</span>
+<span class="nc" id="L137">                        this.mqLockTable.put(group, groupValue);</span>
+                    }
+
+<span class="nc bnc" id="L140" title="All 2 branches missed.">                    for (MessageQueue mq : notLockedMqs) {</span>
+<span class="nc" id="L141">                        LockEntry lockEntry = groupValue.get(mq);</span>
+<span class="nc bnc" id="L142" title="All 2 branches missed.">                        if (null == lockEntry) {</span>
+<span class="nc" id="L143">                            lockEntry = new LockEntry();</span>
+<span class="nc" id="L144">                            lockEntry.setClientId(clientId);</span>
+<span class="nc" id="L145">                            groupValue.put(mq, lockEntry);</span>
+<span class="nc" id="L146">                            log.info(</span>
+                                &quot;tryLockBatch, message queue not locked, I got it. Group: {} NewClientId: {} {}&quot;,
+                                group,
+                                clientId,
+                                mq);
+                        }
+
+<span class="nc bnc" id="L153" title="All 2 branches missed.">                        if (lockEntry.isLocked(clientId)) {</span>
+<span class="nc" id="L154">                            lockEntry.setLastUpdateTimestamp(System.currentTimeMillis());</span>
+<span class="nc" id="L155">                            lockedMqs.add(mq);</span>
+<span class="nc" id="L156">                            continue;</span>
+                        }
+
+<span class="nc" id="L159">                        String oldClientId = lockEntry.getClientId();</span>
+
+<span class="nc bnc" id="L161" title="All 2 branches missed.">                        if (lockEntry.isExpired()) {</span>
+<span class="nc" id="L162">                            lockEntry.setClientId(clientId);</span>
+<span class="nc" id="L163">                            lockEntry.setLastUpdateTimestamp(System.currentTimeMillis());</span>
+<span class="nc" id="L164">                            log.warn(</span>
+                                &quot;tryLockBatch, message queue lock expired, I got it. Group: {} OldClientId: {} NewClientId: {} {}&quot;,
+                                group,
+                                oldClientId,
+                                clientId,
+                                mq);
+<span class="nc" id="L170">                            lockedMqs.add(mq);</span>
+<span class="nc" id="L171">                            continue;</span>
+                        }
+
+<span class="nc" id="L174">                        log.warn(</span>
+                            &quot;tryLockBatch, message queue locked by other client. Group: {} OtherClientId: {} NewClientId: {} {}&quot;,
+                            group,
+                            oldClientId,
+                            clientId,
+                            mq);
+<span class="nc" id="L180">                    }</span>
+                } finally {
+<span class="nc" id="L182">                    this.lock.unlock();</span>
+                }
+<span class="nc" id="L184">            } catch (InterruptedException e) {</span>
+<span class="nc" id="L185">                log.error(&quot;putMessage exception&quot;, e);</span>
+<span class="nc" id="L186">            }</span>
+        }
+
+<span class="nc" id="L189">        return lockedMqs;</span>
+    }
+
+    public void unlockBatch(final String group, final Set&lt;MessageQueue&gt; mqs, final String clientId) {
+        try {
+<span class="nc" id="L194">            this.lock.lockInterruptibly();</span>
+            try {
+<span class="nc" id="L196">                ConcurrentHashMap&lt;MessageQueue, LockEntry&gt; groupValue = this.mqLockTable.get(group);</span>
+<span class="nc bnc" id="L197" title="All 2 branches missed.">                if (null != groupValue) {</span>
+<span class="nc bnc" id="L198" title="All 2 branches missed.">                    for (MessageQueue mq : mqs) {</span>
+<span class="nc" id="L199">                        LockEntry lockEntry = groupValue.get(mq);</span>
+<span class="nc bnc" id="L200" title="All 2 branches missed.">                        if (null != lockEntry) {</span>
+<span class="nc bnc" id="L201" title="All 2 branches missed.">                            if (lockEntry.getClientId().equals(clientId)) {</span>
+<span class="nc" id="L202">                                groupValue.remove(mq);</span>
+<span class="nc" id="L203">                                log.info(&quot;unlockBatch, Group: {} {} {}&quot;,</span>
+                                    group,
+                                    mq,
+                                    clientId);
+                            } else {
+<span class="nc" id="L208">                                log.warn(&quot;unlockBatch, but mq locked by other client: {}, Group: {} {} {}&quot;,</span>
+<span class="nc" id="L209">                                    lockEntry.getClientId(),</span>
+                                    group,
+                                    mq,
+                                    clientId);
+                            }
+                        } else {
+<span class="nc" id="L215">                            log.warn(&quot;unlockBatch, but mq not locked, Group: {} {} {}&quot;,</span>
+                                group,
+                                mq,
+                                clientId);
+                        }
+<span class="nc" id="L220">                    }</span>
+                } else {
+<span class="nc" id="L222">                    log.warn(&quot;unlockBatch, group not exist, Group: {} {}&quot;,</span>
+                        group,
+                        clientId);
+                }
+            } finally {
+<span class="nc" id="L227">                this.lock.unlock();</span>
+            }
+<span class="nc" id="L229">        } catch (InterruptedException e) {</span>
+<span class="nc" id="L230">            log.error(&quot;putMessage exception&quot;, e);</span>
+<span class="nc" id="L231">        }</span>
+<span class="nc" id="L232">    }</span>
+
+<span class="nc" id="L234">    static class LockEntry {</span>
+        private String clientId;
+<span class="nc" id="L236">        private volatile long lastUpdateTimestamp = System.currentTimeMillis();</span>
+
+        public String getClientId() {
+<span class="nc" id="L239">            return clientId;</span>
+        }
+
+        public void setClientId(String clientId) {
+<span class="nc" id="L243">            this.clientId = clientId;</span>
+<span class="nc" id="L244">        }</span>
+
+        public long getLastUpdateTimestamp() {
+<span class="nc" id="L247">            return lastUpdateTimestamp;</span>
+        }
+
+        public void setLastUpdateTimestamp(long lastUpdateTimestamp) {
+<span class="nc" id="L251">            this.lastUpdateTimestamp = lastUpdateTimestamp;</span>
+<span class="nc" id="L252">        }</span>
+
+        public boolean isLocked(final String clientId) {
+<span class="nc" id="L255">            boolean eq = this.clientId.equals(clientId);</span>
+<span class="nc bnc" id="L256" title="All 4 branches missed.">            return eq &amp;&amp; !this.isExpired();</span>
+        }
+
+        public boolean isExpired() {
+            boolean expired =
+<span class="nc bnc" id="L261" title="All 2 branches missed.">                (System.currentTimeMillis() - this.lastUpdateTimestamp) &gt; REBALANCE_LOCK_MAX_LIVE_TIME;</span>
+
+<span class="nc" id="L263">            return expired;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.5.201910111838</span></div></body></html>

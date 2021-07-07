@@ -1,0 +1,160 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ConsumeMessageContext.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">rocketmq-broker 4.8.0</a> &gt; <a href="index.source.html" class="el_package">org.apache.rocketmq.broker.mqtrace</a> &gt; <span class="el_source">ConsumeMessageContext.java</span></div><h1>ConsumeMessageContext.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.rocketmq.broker.mqtrace;
+
+import java.util.Map;
+import org.apache.rocketmq.store.stats.BrokerStatsManager;
+
+<span class="fc" id="L22">public class ConsumeMessageContext {</span>
+    private String consumerGroup;
+    private String topic;
+    private Integer queueId;
+    private String clientHost;
+    private String storeHost;
+    private Map&lt;String, Long&gt; messageIds;
+    private int bodyLength;
+    private boolean success;
+    private String status;
+    private Object mqTraceContext;
+
+    private String commercialOwner;
+    private BrokerStatsManager.StatsType commercialRcvStats;
+    private int commercialRcvTimes;
+    private int commercialRcvSize;
+    private String namespace;
+
+    public String getConsumerGroup() {
+<span class="fc" id="L41">        return consumerGroup;</span>
+    }
+
+    public void setConsumerGroup(String consumerGroup) {
+<span class="fc" id="L45">        this.consumerGroup = consumerGroup;</span>
+<span class="fc" id="L46">    }</span>
+
+    public String getTopic() {
+<span class="fc" id="L49">        return topic;</span>
+    }
+
+    public void setTopic(String topic) {
+<span class="fc" id="L53">        this.topic = topic;</span>
+<span class="fc" id="L54">    }</span>
+
+    public Integer getQueueId() {
+<span class="fc" id="L57">        return queueId;</span>
+    }
+
+    public void setQueueId(Integer queueId) {
+<span class="fc" id="L61">        this.queueId = queueId;</span>
+<span class="fc" id="L62">    }</span>
+
+    public String getClientHost() {
+<span class="nc" id="L65">        return clientHost;</span>
+    }
+
+    public void setClientHost(String clientHost) {
+<span class="nc" id="L69">        this.clientHost = clientHost;</span>
+<span class="nc" id="L70">    }</span>
+
+    public String getStoreHost() {
+<span class="nc" id="L73">        return storeHost;</span>
+    }
+
+    public void setStoreHost(String storeHost) {
+<span class="nc" id="L77">        this.storeHost = storeHost;</span>
+<span class="nc" id="L78">    }</span>
+
+    public Map&lt;String, Long&gt; getMessageIds() {
+<span class="nc" id="L81">        return messageIds;</span>
+    }
+
+    public void setMessageIds(Map&lt;String, Long&gt; messageIds) {
+<span class="nc" id="L85">        this.messageIds = messageIds;</span>
+<span class="nc" id="L86">    }</span>
+
+    public boolean isSuccess() {
+<span class="nc" id="L89">        return success;</span>
+    }
+
+    public void setSuccess(boolean success) {
+<span class="nc" id="L93">        this.success = success;</span>
+<span class="nc" id="L94">    }</span>
+
+    public String getStatus() {
+<span class="nc" id="L97">        return status;</span>
+    }
+
+    public void setStatus(String status) {
+<span class="nc" id="L101">        this.status = status;</span>
+<span class="nc" id="L102">    }</span>
+
+    public Object getMqTraceContext() {
+<span class="nc" id="L105">        return mqTraceContext;</span>
+    }
+
+    public void setMqTraceContext(Object mqTraceContext) {
+<span class="nc" id="L109">        this.mqTraceContext = mqTraceContext;</span>
+<span class="nc" id="L110">    }</span>
+
+    public int getBodyLength() {
+<span class="nc" id="L113">        return bodyLength;</span>
+    }
+
+    public void setBodyLength(int bodyLength) {
+<span class="nc" id="L117">        this.bodyLength = bodyLength;</span>
+<span class="nc" id="L118">    }</span>
+
+    public String getCommercialOwner() {
+<span class="nc" id="L121">        return commercialOwner;</span>
+    }
+
+    public void setCommercialOwner(final String commercialOwner) {
+<span class="fc" id="L125">        this.commercialOwner = commercialOwner;</span>
+<span class="fc" id="L126">    }</span>
+
+    public BrokerStatsManager.StatsType getCommercialRcvStats() {
+<span class="nc" id="L129">        return commercialRcvStats;</span>
+    }
+
+    public void setCommercialRcvStats(final BrokerStatsManager.StatsType commercialRcvStats) {
+<span class="fc" id="L133">        this.commercialRcvStats = commercialRcvStats;</span>
+<span class="fc" id="L134">    }</span>
+
+    public int getCommercialRcvTimes() {
+<span class="nc" id="L137">        return commercialRcvTimes;</span>
+    }
+
+    public void setCommercialRcvTimes(final int commercialRcvTimes) {
+<span class="fc" id="L141">        this.commercialRcvTimes = commercialRcvTimes;</span>
+<span class="fc" id="L142">    }</span>
+
+    public int getCommercialRcvSize() {
+<span class="nc" id="L145">        return commercialRcvSize;</span>
+    }
+
+    public void setCommercialRcvSize(final int commercialRcvSize) {
+<span class="fc" id="L149">        this.commercialRcvSize = commercialRcvSize;</span>
+<span class="fc" id="L150">    }</span>
+
+    public String getNamespace() {
+<span class="nc" id="L153">        return namespace;</span>
+    }
+
+    public void setNamespace(String namespace) {
+<span class="nc" id="L157">        this.namespace = namespace;</span>
+<span class="nc" id="L158">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.5.201910111838</span></div></body></html>

@@ -1,0 +1,174 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DispatchRequest.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">rocketmq-store 4.8.0</a> &gt; <a href="index.source.html" class="el_package">org.apache.rocketmq.store</a> &gt; <span class="el_source">DispatchRequest.java</span></div><h1>DispatchRequest.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.rocketmq.store;
+
+import java.util.Map;
+
+public class DispatchRequest {
+    private final String topic;
+    private final int queueId;
+    private final long commitLogOffset;
+    private int msgSize;
+    private final long tagsCode;
+    private final long storeTimestamp;
+    private final long consumeQueueOffset;
+    private final String keys;
+    private final boolean success;
+    private final String uniqKey;
+
+    private final int sysFlag;
+    private final long preparedTransactionOffset;
+    private final Map&lt;String, String&gt; propertiesMap;
+    private byte[] bitMap;
+
+<span class="pc" id="L38">    private int bufferSize = -1;//the buffer size maybe larger than the msg size if the message is wrapped by something</span>
+
+    public DispatchRequest(
+        final String topic,
+        final int queueId,
+        final long commitLogOffset,
+        final int msgSize,
+        final long tagsCode,
+        final long storeTimestamp,
+        final long consumeQueueOffset,
+        final String keys,
+        final String uniqKey,
+        final int sysFlag,
+        final long preparedTransactionOffset,
+        final Map&lt;String, String&gt; propertiesMap
+<span class="fc" id="L53">    ) {</span>
+<span class="fc" id="L54">        this.topic = topic;</span>
+<span class="fc" id="L55">        this.queueId = queueId;</span>
+<span class="fc" id="L56">        this.commitLogOffset = commitLogOffset;</span>
+<span class="fc" id="L57">        this.msgSize = msgSize;</span>
+<span class="fc" id="L58">        this.tagsCode = tagsCode;</span>
+<span class="fc" id="L59">        this.storeTimestamp = storeTimestamp;</span>
+<span class="fc" id="L60">        this.consumeQueueOffset = consumeQueueOffset;</span>
+<span class="fc" id="L61">        this.keys = keys;</span>
+<span class="fc" id="L62">        this.uniqKey = uniqKey;</span>
+
+<span class="fc" id="L64">        this.sysFlag = sysFlag;</span>
+<span class="fc" id="L65">        this.preparedTransactionOffset = preparedTransactionOffset;</span>
+<span class="fc" id="L66">        this.success = true;</span>
+<span class="fc" id="L67">        this.propertiesMap = propertiesMap;</span>
+<span class="fc" id="L68">    }</span>
+
+<span class="nc" id="L70">    public DispatchRequest(int size) {</span>
+<span class="nc" id="L71">        this.topic = &quot;&quot;;</span>
+<span class="nc" id="L72">        this.queueId = 0;</span>
+<span class="nc" id="L73">        this.commitLogOffset = 0;</span>
+<span class="nc" id="L74">        this.msgSize = size;</span>
+<span class="nc" id="L75">        this.tagsCode = 0;</span>
+<span class="nc" id="L76">        this.storeTimestamp = 0;</span>
+<span class="nc" id="L77">        this.consumeQueueOffset = 0;</span>
+<span class="nc" id="L78">        this.keys = &quot;&quot;;</span>
+<span class="nc" id="L79">        this.uniqKey = null;</span>
+<span class="nc" id="L80">        this.sysFlag = 0;</span>
+<span class="nc" id="L81">        this.preparedTransactionOffset = 0;</span>
+<span class="nc" id="L82">        this.success = false;</span>
+<span class="nc" id="L83">        this.propertiesMap = null;</span>
+<span class="nc" id="L84">    }</span>
+
+<span class="fc" id="L86">    public DispatchRequest(int size, boolean success) {</span>
+<span class="fc" id="L87">        this.topic = &quot;&quot;;</span>
+<span class="fc" id="L88">        this.queueId = 0;</span>
+<span class="fc" id="L89">        this.commitLogOffset = 0;</span>
+<span class="fc" id="L90">        this.msgSize = size;</span>
+<span class="fc" id="L91">        this.tagsCode = 0;</span>
+<span class="fc" id="L92">        this.storeTimestamp = 0;</span>
+<span class="fc" id="L93">        this.consumeQueueOffset = 0;</span>
+<span class="fc" id="L94">        this.keys = &quot;&quot;;</span>
+<span class="fc" id="L95">        this.uniqKey = null;</span>
+<span class="fc" id="L96">        this.sysFlag = 0;</span>
+<span class="fc" id="L97">        this.preparedTransactionOffset = 0;</span>
+<span class="fc" id="L98">        this.success = success;</span>
+<span class="fc" id="L99">        this.propertiesMap = null;</span>
+<span class="fc" id="L100">    }</span>
+
+    public String getTopic() {
+<span class="fc" id="L103">        return topic;</span>
+    }
+
+    public int getQueueId() {
+<span class="fc" id="L107">        return queueId;</span>
+    }
+
+    public long getCommitLogOffset() {
+<span class="fc" id="L111">        return commitLogOffset;</span>
+    }
+
+    public int getMsgSize() {
+<span class="fc" id="L115">        return msgSize;</span>
+    }
+
+    public long getStoreTimestamp() {
+<span class="fc" id="L119">        return storeTimestamp;</span>
+    }
+
+    public long getConsumeQueueOffset() {
+<span class="fc" id="L123">        return consumeQueueOffset;</span>
+    }
+
+    public String getKeys() {
+<span class="fc" id="L127">        return keys;</span>
+    }
+
+    public long getTagsCode() {
+<span class="fc" id="L131">        return tagsCode;</span>
+    }
+
+    public int getSysFlag() {
+<span class="fc" id="L135">        return sysFlag;</span>
+    }
+
+    public long getPreparedTransactionOffset() {
+<span class="nc" id="L139">        return preparedTransactionOffset;</span>
+    }
+
+    public boolean isSuccess() {
+<span class="fc" id="L143">        return success;</span>
+    }
+
+    public String getUniqKey() {
+<span class="fc" id="L147">        return uniqKey;</span>
+    }
+
+    public Map&lt;String, String&gt; getPropertiesMap() {
+<span class="fc" id="L151">        return propertiesMap;</span>
+    }
+
+    public byte[] getBitMap() {
+<span class="fc" id="L155">        return bitMap;</span>
+    }
+
+    public void setBitMap(byte[] bitMap) {
+<span class="nc" id="L159">        this.bitMap = bitMap;</span>
+<span class="nc" id="L160">    }</span>
+
+    public void setMsgSize(int msgSize) {
+<span class="nc" id="L163">        this.msgSize = msgSize;</span>
+<span class="nc" id="L164">    }</span>
+
+    public int getBufferSize() {
+<span class="fc" id="L167">        return bufferSize;</span>
+    }
+
+    public void setBufferSize(int bufferSize) {
+<span class="fc" id="L171">        this.bufferSize = bufferSize;</span>
+<span class="fc" id="L172">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.5.201910111838</span></div></body></html>

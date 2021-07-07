@@ -1,0 +1,1234 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DLedgerCommitLog.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">rocketmq-store 4.8.0</a> &gt; <a href="index.source.html" class="el_package">org.apache.rocketmq.store.dledger</a> &gt; <span class="el_source">DLedgerCommitLog.java</span></div><h1>DLedgerCommitLog.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.rocketmq.store.dledger;
+
+import io.openmessaging.storage.dledger.AppendFuture;
+import io.openmessaging.storage.dledger.BatchAppendFuture;
+import io.openmessaging.storage.dledger.DLedgerConfig;
+import io.openmessaging.storage.dledger.DLedgerServer;
+import io.openmessaging.storage.dledger.entry.DLedgerEntry;
+import io.openmessaging.storage.dledger.protocol.AppendEntryRequest;
+import io.openmessaging.storage.dledger.protocol.AppendEntryResponse;
+import io.openmessaging.storage.dledger.protocol.BatchAppendEntryRequest;
+import io.openmessaging.storage.dledger.protocol.DLedgerResponseCode;
+import io.openmessaging.storage.dledger.store.file.DLedgerMmapFileStore;
+import io.openmessaging.storage.dledger.store.file.MmapFile;
+import io.openmessaging.storage.dledger.store.file.MmapFileList;
+import io.openmessaging.storage.dledger.store.file.SelectMmapBufferResult;
+import io.openmessaging.storage.dledger.utils.DLedgerUtils;
+import java.net.Inet6Address;
+import java.net.InetSocketAddress;
+import java.nio.ByteBuffer;
+import java.util.HashMap;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
+import org.apache.rocketmq.common.UtilAll;
+import org.apache.rocketmq.common.message.MessageAccessor;
+import org.apache.rocketmq.common.message.MessageConst;
+import org.apache.rocketmq.common.message.MessageDecoder;
+import org.apache.rocketmq.common.message.MessageExtBatch;
+import org.apache.rocketmq.common.sysflag.MessageSysFlag;
+import org.apache.rocketmq.common.topic.TopicValidator;
+import org.apache.rocketmq.store.AppendMessageResult;
+import org.apache.rocketmq.store.AppendMessageStatus;
+import org.apache.rocketmq.store.CommitLog;
+import org.apache.rocketmq.store.DefaultMessageStore;
+import org.apache.rocketmq.store.DispatchRequest;
+import org.apache.rocketmq.store.MappedFile;
+import org.apache.rocketmq.store.MessageExtBrokerInner;
+import org.apache.rocketmq.store.PutMessageResult;
+import org.apache.rocketmq.store.PutMessageStatus;
+import org.apache.rocketmq.store.SelectMappedBufferResult;
+import org.apache.rocketmq.store.StoreStatsService;
+import org.apache.rocketmq.store.schedule.ScheduleMessageService;
+
+/**
+ * Store all metadata downtime for recovery, data protection reliability
+ */
+<span class="pc bpc" id="L64" title="1 of 2 branches missed.">public class DLedgerCommitLog extends CommitLog {</span>
+    private final DLedgerServer dLedgerServer;
+    private final DLedgerConfig dLedgerConfig;
+    private final DLedgerMmapFileStore dLedgerFileStore;
+    private final MmapFileList dLedgerFileList;
+
+    //The id identifies the broker role, 0 means master, others means slave
+    private final int id;
+
+    private final MessageSerializer messageSerializer;
+<span class="fc" id="L74">    private volatile long beginTimeInDledgerLock = 0;</span>
+
+    //This offset separate the old commitlog from dledger commitlog
+<span class="fc" id="L77">    private long dividedCommitlogOffset = -1;</span>
+
+<span class="fc" id="L79">    private boolean isInrecoveringOldCommitlog = false;</span>
+
+<span class="fc" id="L81">    private final StringBuilder msgIdBuilder = new StringBuilder();</span>
+
+    public DLedgerCommitLog(final DefaultMessageStore defaultMessageStore) {
+<span class="fc" id="L84">        super(defaultMessageStore);</span>
+<span class="fc" id="L85">        dLedgerConfig = new DLedgerConfig();</span>
+<span class="fc" id="L86">        dLedgerConfig.setEnableDiskForceClean(defaultMessageStore.getMessageStoreConfig().isCleanFileForciblyEnable());</span>
+<span class="fc" id="L87">        dLedgerConfig.setStoreType(DLedgerConfig.FILE);</span>
+<span class="fc" id="L88">        dLedgerConfig.setSelfId(defaultMessageStore.getMessageStoreConfig().getdLegerSelfId());</span>
+<span class="fc" id="L89">        dLedgerConfig.setGroup(defaultMessageStore.getMessageStoreConfig().getdLegerGroup());</span>
+<span class="fc" id="L90">        dLedgerConfig.setPeers(defaultMessageStore.getMessageStoreConfig().getdLegerPeers());</span>
+<span class="fc" id="L91">        dLedgerConfig.setStoreBaseDir(defaultMessageStore.getMessageStoreConfig().getStorePathRootDir());</span>
+<span class="fc" id="L92">        dLedgerConfig.setMappedFileSizeForEntryData(defaultMessageStore.getMessageStoreConfig().getMappedFileSizeCommitLog());</span>
+<span class="fc" id="L93">        dLedgerConfig.setDeleteWhen(defaultMessageStore.getMessageStoreConfig().getDeleteWhen());</span>
+<span class="fc" id="L94">        dLedgerConfig.setFileReservedHours(defaultMessageStore.getMessageStoreConfig().getFileReservedTime() + 1);</span>
+<span class="fc" id="L95">        dLedgerConfig.setPreferredLeaderId(defaultMessageStore.getMessageStoreConfig().getPreferredLeaderId());</span>
+<span class="fc" id="L96">        dLedgerConfig.setEnableBatchPush(defaultMessageStore.getMessageStoreConfig().isEnableBatchPush());</span>
+
+<span class="fc" id="L98">        id = Integer.valueOf(dLedgerConfig.getSelfId().substring(1)) + 1;</span>
+<span class="fc" id="L99">        dLedgerServer = new DLedgerServer(dLedgerConfig);</span>
+<span class="fc" id="L100">        dLedgerFileStore = (DLedgerMmapFileStore) dLedgerServer.getdLedgerStore();</span>
+<span class="fc" id="L101">        DLedgerMmapFileStore.AppendHook appendHook = (entry, buffer, bodyOffset) -&gt; {</span>
+<span class="pc bpc" id="L102" title="2 of 4 branches missed.">            assert bodyOffset == DLedgerEntry.BODY_OFFSET;</span>
+<span class="fc" id="L103">            buffer.position(buffer.position() + bodyOffset + MessageDecoder.PHY_POS_POSITION);</span>
+<span class="fc" id="L104">            buffer.putLong(entry.getPos() + bodyOffset);</span>
+<span class="fc" id="L105">        };</span>
+<span class="fc" id="L106">        dLedgerFileStore.addAppendHook(appendHook);</span>
+<span class="fc" id="L107">        dLedgerFileList = dLedgerFileStore.getDataFileList();</span>
+<span class="fc" id="L108">        this.messageSerializer = new MessageSerializer(defaultMessageStore.getMessageStoreConfig().getMaxMessageSize());</span>
+
+<span class="fc" id="L110">    }</span>
+
+    @Override
+    public boolean load() {
+<span class="fc" id="L114">        return super.load();</span>
+    }
+
+    private void refreshConfig() {
+<span class="fc" id="L118">        dLedgerConfig.setEnableDiskForceClean(defaultMessageStore.getMessageStoreConfig().isCleanFileForciblyEnable());</span>
+<span class="fc" id="L119">        dLedgerConfig.setDeleteWhen(defaultMessageStore.getMessageStoreConfig().getDeleteWhen());</span>
+<span class="fc" id="L120">        dLedgerConfig.setFileReservedHours(defaultMessageStore.getMessageStoreConfig().getFileReservedTime() + 1);</span>
+<span class="fc" id="L121">    }</span>
+
+    private void disableDeleteDledger() {
+<span class="fc" id="L124">        dLedgerConfig.setEnableDiskForceClean(false);</span>
+<span class="fc" id="L125">        dLedgerConfig.setFileReservedHours(24 * 365 * 10);</span>
+<span class="fc" id="L126">    }</span>
+
+    @Override
+    public void start() {
+<span class="fc" id="L130">        dLedgerServer.startup();</span>
+<span class="fc" id="L131">    }</span>
+
+    @Override
+    public void shutdown() {
+<span class="fc" id="L135">        dLedgerServer.shutdown();</span>
+<span class="fc" id="L136">    }</span>
+
+    @Override
+    public long flush() {
+<span class="nc" id="L140">        dLedgerFileStore.flush();</span>
+<span class="nc" id="L141">        return dLedgerFileList.getFlushedWhere();</span>
+    }
+
+    @Override
+    public long getMaxOffset() {
+<span class="fc bfc" id="L146" title="All 2 branches covered.">        if (dLedgerFileStore.getCommittedPos() &gt; 0) {</span>
+<span class="fc" id="L147">            return dLedgerFileStore.getCommittedPos();</span>
+        }
+<span class="fc bfc" id="L149" title="All 2 branches covered.">        if (dLedgerFileList.getMinOffset() &gt; 0) {</span>
+<span class="fc" id="L150">            return dLedgerFileList.getMinOffset();</span>
+        }
+<span class="fc" id="L152">        return 0;</span>
+    }
+
+    @Override
+    public long getMinOffset() {
+<span class="fc bfc" id="L157" title="All 2 branches covered.">        if (!mappedFileQueue.getMappedFiles().isEmpty()) {</span>
+<span class="fc" id="L158">            return mappedFileQueue.getMinOffset();</span>
+        }
+<span class="fc" id="L160">        return dLedgerFileList.getMinOffset();</span>
+    }
+
+    @Override
+    public long getConfirmOffset() {
+<span class="fc" id="L165">        return this.getMaxOffset();</span>
+    }
+
+    @Override
+    public void setConfirmOffset(long phyOffset) {
+<span class="nc" id="L170">        log.warn(&quot;Should not set confirm offset {} for dleger commitlog&quot;, phyOffset);</span>
+<span class="nc" id="L171">    }</span>
+
+    @Override
+    public long remainHowManyDataToCommit() {
+<span class="nc" id="L175">        return dLedgerFileList.remainHowManyDataToCommit();</span>
+    }
+
+    @Override
+    public long remainHowManyDataToFlush() {
+<span class="nc" id="L180">        return dLedgerFileList.remainHowManyDataToFlush();</span>
+    }
+
+    @Override
+    public int deleteExpiredFile(
+        final long expiredTime,
+        final int deleteFilesInterval,
+        final long intervalForcibly,
+        final boolean cleanImmediately
+    ) {
+<span class="fc bfc" id="L190" title="All 2 branches covered.">        if (mappedFileQueue.getMappedFiles().isEmpty()) {</span>
+<span class="fc" id="L191">            refreshConfig();</span>
+            //To prevent too much log in defaultMessageStore
+<span class="fc" id="L193">            return Integer.MAX_VALUE;</span>
+        } else {
+<span class="fc" id="L195">            disableDeleteDledger();</span>
+        }
+<span class="fc" id="L197">        int count = super.deleteExpiredFile(expiredTime, deleteFilesInterval, intervalForcibly, cleanImmediately);</span>
+<span class="pc bpc" id="L198" title="1 of 4 branches missed.">        if (count &gt; 0 || mappedFileQueue.getMappedFiles().size() != 1) {</span>
+<span class="fc" id="L199">            return count;</span>
+        }
+        //the old logic will keep the last file, here to delete it
+<span class="fc" id="L202">        MappedFile mappedFile = mappedFileQueue.getLastMappedFile();</span>
+<span class="fc" id="L203">        log.info(&quot;Try to delete the last old commitlog file {}&quot;, mappedFile.getFileName());</span>
+<span class="fc" id="L204">        long liveMaxTimestamp = mappedFile.getLastModifiedTimestamp() + expiredTime;</span>
+<span class="pc bpc" id="L205" title="2 of 4 branches missed.">        if (System.currentTimeMillis() &gt;= liveMaxTimestamp || cleanImmediately) {</span>
+<span class="pc bpc" id="L206" title="1 of 2 branches missed.">            while (!mappedFile.destroy(10 * 1000)) {</span>
+<span class="nc" id="L207">                DLedgerUtils.sleep(1000);</span>
+            }
+<span class="fc" id="L209">            mappedFileQueue.getMappedFiles().remove(mappedFile);</span>
+        }
+<span class="fc" id="L211">        return 1;</span>
+    }
+
+    public SelectMappedBufferResult convertSbr(SelectMmapBufferResult sbr) {
+<span class="pc bpc" id="L215" title="1 of 2 branches missed.">        if (sbr == null) {</span>
+<span class="nc" id="L216">            return null;</span>
+        } else {
+<span class="fc" id="L218">            return new DLedgerSelectMappedBufferResult(sbr);</span>
+        }
+
+    }
+
+    public SelectMmapBufferResult truncate(SelectMmapBufferResult sbr) {
+<span class="fc" id="L224">        long committedPos = dLedgerFileStore.getCommittedPos();</span>
+<span class="pc bpc" id="L225" title="2 of 4 branches missed.">        if (sbr == null || sbr.getStartOffset() == committedPos) {</span>
+<span class="nc" id="L226">            return null;</span>
+        }
+<span class="fc bfc" id="L228" title="All 2 branches covered.">        if (sbr.getStartOffset() + sbr.getSize() &lt;= committedPos) {</span>
+<span class="fc" id="L229">            return sbr;</span>
+        } else {
+<span class="fc" id="L231">            sbr.setSize((int) (committedPos - sbr.getStartOffset()));</span>
+<span class="fc" id="L232">            return sbr;</span>
+        }
+    }
+
+    @Override
+    public SelectMappedBufferResult getData(final long offset) {
+<span class="fc bfc" id="L238" title="All 2 branches covered.">        if (offset &lt; dividedCommitlogOffset) {</span>
+<span class="fc" id="L239">            return super.getData(offset);</span>
+        }
+<span class="fc bfc" id="L241" title="All 2 branches covered.">        return this.getData(offset, offset == 0);</span>
+    }
+
+    @Override
+    public SelectMappedBufferResult getData(final long offset, final boolean returnFirstOnNotFound) {
+<span class="fc bfc" id="L246" title="All 2 branches covered.">        if (offset &lt; dividedCommitlogOffset) {</span>
+<span class="fc" id="L247">            return super.getData(offset, returnFirstOnNotFound);</span>
+        }
+<span class="pc bpc" id="L249" title="1 of 2 branches missed.">        if (offset &gt;= dLedgerFileStore.getCommittedPos()) {</span>
+<span class="nc" id="L250">            return null;</span>
+        }
+<span class="fc" id="L252">        int mappedFileSize = this.dLedgerServer.getdLedgerConfig().getMappedFileSizeForEntryData();</span>
+<span class="fc" id="L253">        MmapFile mappedFile = this.dLedgerFileList.findMappedFileByOffset(offset, returnFirstOnNotFound);</span>
+<span class="pc bpc" id="L254" title="1 of 2 branches missed.">        if (mappedFile != null) {</span>
+<span class="fc" id="L255">            int pos = (int) (offset % mappedFileSize);</span>
+<span class="fc" id="L256">            SelectMmapBufferResult sbr = mappedFile.selectMappedBuffer(pos);</span>
+<span class="fc" id="L257">            return convertSbr(truncate(sbr));</span>
+        }
+
+<span class="nc" id="L260">        return null;</span>
+    }
+
+    private void recover(long maxPhyOffsetOfConsumeQueue) {
+<span class="fc" id="L264">        dLedgerFileStore.load();</span>
+<span class="fc bfc" id="L265" title="All 2 branches covered.">        if (dLedgerFileList.getMappedFiles().size() &gt; 0) {</span>
+<span class="fc" id="L266">            dLedgerFileStore.recover();</span>
+<span class="fc" id="L267">            dividedCommitlogOffset = dLedgerFileList.getFirstMappedFile().getFileFromOffset();</span>
+<span class="fc" id="L268">            MappedFile mappedFile = this.mappedFileQueue.getLastMappedFile();</span>
+<span class="fc bfc" id="L269" title="All 2 branches covered.">            if (mappedFile != null) {</span>
+<span class="fc" id="L270">                disableDeleteDledger();</span>
+            }
+<span class="fc" id="L272">            long maxPhyOffset = dLedgerFileList.getMaxWrotePosition();</span>
+            // Clear ConsumeQueue redundant data
+<span class="pc bpc" id="L274" title="1 of 2 branches missed.">            if (maxPhyOffsetOfConsumeQueue &gt;= maxPhyOffset) {</span>
+<span class="fc" id="L275">                log.warn(&quot;[TruncateCQ]maxPhyOffsetOfConsumeQueue({}) &gt;= processOffset({}), truncate dirty logic files&quot;, maxPhyOffsetOfConsumeQueue, maxPhyOffset);</span>
+<span class="fc" id="L276">                this.defaultMessageStore.truncateDirtyLogicFiles(maxPhyOffset);</span>
+            }
+<span class="fc" id="L278">            return;</span>
+        }
+        //Indicate that, it is the first time to load mixed commitlog, need to recover the old commitlog
+<span class="fc" id="L281">        isInrecoveringOldCommitlog = true;</span>
+        //No need the abnormal recover
+<span class="fc" id="L283">        super.recoverNormally(maxPhyOffsetOfConsumeQueue);</span>
+<span class="fc" id="L284">        isInrecoveringOldCommitlog = false;</span>
+<span class="fc" id="L285">        MappedFile mappedFile = this.mappedFileQueue.getLastMappedFile();</span>
+<span class="fc bfc" id="L286" title="All 2 branches covered.">        if (mappedFile == null) {</span>
+<span class="fc" id="L287">            return;</span>
+        }
+<span class="fc" id="L289">        ByteBuffer byteBuffer = mappedFile.sliceByteBuffer();</span>
+<span class="fc" id="L290">        byteBuffer.position(mappedFile.getWrotePosition());</span>
+<span class="fc" id="L291">        boolean needWriteMagicCode = true;</span>
+        // 1 TOTAL SIZE
+<span class="fc" id="L293">        byteBuffer.getInt(); //size</span>
+<span class="fc" id="L294">        int magicCode = byteBuffer.getInt();</span>
+<span class="pc bpc" id="L295" title="1 of 2 branches missed.">        if (magicCode == CommitLog.BLANK_MAGIC_CODE) {</span>
+<span class="nc" id="L296">            needWriteMagicCode = false;</span>
+        } else {
+<span class="fc" id="L298">            log.info(&quot;Recover old commitlog found a illegal magic code={}&quot;, magicCode);</span>
+        }
+<span class="fc" id="L300">        dLedgerConfig.setEnableDiskForceClean(false);</span>
+<span class="fc" id="L301">        dividedCommitlogOffset = mappedFile.getFileFromOffset() + mappedFile.getFileSize();</span>
+<span class="fc" id="L302">        log.info(&quot;Recover old commitlog needWriteMagicCode={} pos={} file={} dividedCommitlogOffset={}&quot;, needWriteMagicCode, mappedFile.getFileFromOffset() + mappedFile.getWrotePosition(), mappedFile.getFileName(), dividedCommitlogOffset);</span>
+<span class="pc bpc" id="L303" title="1 of 2 branches missed.">        if (needWriteMagicCode) {</span>
+<span class="fc" id="L304">            byteBuffer.position(mappedFile.getWrotePosition());</span>
+<span class="fc" id="L305">            byteBuffer.putInt(mappedFile.getFileSize() - mappedFile.getWrotePosition());</span>
+<span class="fc" id="L306">            byteBuffer.putInt(BLANK_MAGIC_CODE);</span>
+<span class="fc" id="L307">            mappedFile.flush(0);</span>
+        }
+<span class="fc" id="L309">        mappedFile.setWrotePosition(mappedFile.getFileSize());</span>
+<span class="fc" id="L310">        mappedFile.setCommittedPosition(mappedFile.getFileSize());</span>
+<span class="fc" id="L311">        mappedFile.setFlushedPosition(mappedFile.getFileSize());</span>
+<span class="fc" id="L312">        dLedgerFileList.getLastMappedFile(dividedCommitlogOffset);</span>
+<span class="fc" id="L313">        log.info(&quot;Will set the initial commitlog offset={} for dledger&quot;, dividedCommitlogOffset);</span>
+<span class="fc" id="L314">    }</span>
+
+    @Override
+    public void recoverNormally(long maxPhyOffsetOfConsumeQueue) {
+<span class="fc" id="L318">        recover(maxPhyOffsetOfConsumeQueue);</span>
+<span class="fc" id="L319">    }</span>
+
+    @Override
+    public void recoverAbnormally(long maxPhyOffsetOfConsumeQueue) {
+<span class="fc" id="L323">        recover(maxPhyOffsetOfConsumeQueue);</span>
+<span class="fc" id="L324">    }</span>
+
+    @Override
+    public DispatchRequest checkMessageAndReturnSize(ByteBuffer byteBuffer, final boolean checkCRC) {
+<span class="fc" id="L328">        return this.checkMessageAndReturnSize(byteBuffer, checkCRC, true);</span>
+    }
+
+    @Override
+    public DispatchRequest checkMessageAndReturnSize(ByteBuffer byteBuffer, final boolean checkCRC,
+        final boolean readBody) {
+<span class="fc bfc" id="L334" title="All 2 branches covered.">        if (isInrecoveringOldCommitlog) {</span>
+<span class="fc" id="L335">            return super.checkMessageAndReturnSize(byteBuffer, checkCRC, readBody);</span>
+        }
+        try {
+<span class="fc" id="L338">            int bodyOffset = DLedgerEntry.BODY_OFFSET;</span>
+<span class="fc" id="L339">            int pos = byteBuffer.position();</span>
+<span class="fc" id="L340">            int magic = byteBuffer.getInt();</span>
+            //In dledger, this field is size, it must be gt 0, so it could prevent collision
+<span class="fc" id="L342">            int magicOld = byteBuffer.getInt();</span>
+<span class="fc bfc" id="L343" title="All 4 branches covered.">            if (magicOld == CommitLog.BLANK_MAGIC_CODE || magicOld == CommitLog.MESSAGE_MAGIC_CODE) {</span>
+<span class="fc" id="L344">                byteBuffer.position(pos);</span>
+<span class="fc" id="L345">                return super.checkMessageAndReturnSize(byteBuffer, checkCRC, readBody);</span>
+            }
+<span class="fc bfc" id="L347" title="All 2 branches covered.">            if (magic == MmapFileList.BLANK_MAGIC_CODE) {</span>
+<span class="fc" id="L348">                return new DispatchRequest(0, true);</span>
+            }
+<span class="fc" id="L350">            byteBuffer.position(pos + bodyOffset);</span>
+<span class="fc" id="L351">            DispatchRequest dispatchRequest = super.checkMessageAndReturnSize(byteBuffer, checkCRC, readBody);</span>
+<span class="pc bpc" id="L352" title="1 of 2 branches missed.">            if (dispatchRequest.isSuccess()) {</span>
+<span class="fc" id="L353">                dispatchRequest.setBufferSize(dispatchRequest.getMsgSize() + bodyOffset);</span>
+<span class="nc bnc" id="L354" title="All 2 branches missed.">            } else if (dispatchRequest.getMsgSize() &gt; 0) {</span>
+<span class="nc" id="L355">                dispatchRequest.setBufferSize(dispatchRequest.getMsgSize() + bodyOffset);</span>
+            }
+<span class="fc" id="L357">            return dispatchRequest;</span>
+<span class="nc" id="L358">        } catch (Throwable ignored) {</span>
+        }
+
+<span class="nc" id="L361">        return new DispatchRequest(-1, false /* success */);</span>
+    }
+
+    @Override
+    public boolean resetOffset(long offset) {
+        //currently, it seems resetOffset has no use
+<span class="nc" id="L367">        return false;</span>
+    }
+
+    @Override
+    public long getBeginTimeInLock() {
+<span class="fc" id="L372">        return beginTimeInDledgerLock;</span>
+    }
+
+    private void setMessageInfo(MessageExtBrokerInner msg, int tranType) {
+        // Set the storage time
+<span class="fc" id="L377">        msg.setStoreTimestamp(System.currentTimeMillis());</span>
+        // Set the message body BODY CRC (consider the most appropriate setting
+        // on the client)
+<span class="fc" id="L380">        msg.setBodyCRC(UtilAll.crc32(msg.getBody()));</span>
+
+        //should be consistent with the old version
+<span class="pc bpc" id="L383" title="3 of 4 branches missed.">        if (tranType == MessageSysFlag.TRANSACTION_NOT_TYPE</span>
+            || tranType == MessageSysFlag.TRANSACTION_COMMIT_TYPE) {
+            // Delay Delivery
+<span class="pc bpc" id="L386" title="1 of 2 branches missed.">            if (msg.getDelayTimeLevel() &gt; 0) {</span>
+<span class="nc bnc" id="L387" title="All 2 branches missed.">                if (msg.getDelayTimeLevel() &gt; this.defaultMessageStore.getScheduleMessageService().getMaxDelayLevel()) {</span>
+<span class="nc" id="L388">                    msg.setDelayTimeLevel(this.defaultMessageStore.getScheduleMessageService().getMaxDelayLevel());</span>
+                }
+
+
+<span class="nc" id="L392">                String topic = TopicValidator.RMQ_SYS_SCHEDULE_TOPIC;</span>
+<span class="nc" id="L393">                int queueId = ScheduleMessageService.delayLevel2QueueId(msg.getDelayTimeLevel());</span>
+
+                // Backup real topic, queueId
+<span class="nc" id="L396">                MessageAccessor.putProperty(msg, MessageConst.PROPERTY_REAL_TOPIC, msg.getTopic());</span>
+<span class="nc" id="L397">                MessageAccessor.putProperty(msg, MessageConst.PROPERTY_REAL_QUEUE_ID, String.valueOf(msg.getQueueId()));</span>
+<span class="nc" id="L398">                msg.setPropertiesString(MessageDecoder.messageProperties2String(msg.getProperties()));</span>
+
+<span class="nc" id="L400">                msg.setTopic(topic);</span>
+<span class="nc" id="L401">                msg.setQueueId(queueId);</span>
+            }
+        }
+
+<span class="fc" id="L405">        InetSocketAddress bornSocketAddress = (InetSocketAddress) msg.getBornHost();</span>
+<span class="fc bfc" id="L406" title="All 2 branches covered.">        if (bornSocketAddress.getAddress() instanceof Inet6Address) {</span>
+<span class="fc" id="L407">            msg.setBornHostV6Flag();</span>
+        }
+
+<span class="fc" id="L410">        InetSocketAddress storeSocketAddress = (InetSocketAddress) msg.getStoreHost();</span>
+<span class="fc bfc" id="L411" title="All 2 branches covered.">        if (storeSocketAddress.getAddress() instanceof Inet6Address) {</span>
+<span class="fc" id="L412">            msg.setStoreHostAddressV6Flag();</span>
+        }
+<span class="fc" id="L414">    }</span>
+
+    @Override
+    public PutMessageResult putMessage(final MessageExtBrokerInner msg) {
+
+<span class="fc" id="L419">        StoreStatsService storeStatsService = this.defaultMessageStore.getStoreStatsService();</span>
+<span class="fc" id="L420">        final int tranType = MessageSysFlag.getTransactionValue(msg.getSysFlag());</span>
+<span class="fc" id="L421">        String topic = msg.getTopic();</span>
+<span class="fc" id="L422">        setMessageInfo(msg,tranType);</span>
+
+        // Back to Results
+        AppendMessageResult appendResult;
+        AppendFuture&lt;AppendEntryResponse&gt; dledgerFuture;
+        EncodeResult encodeResult;
+
+<span class="fc" id="L429">        putMessageLock.lock(); //spin or ReentrantLock ,depending on store config</span>
+        long elapsedTimeInLock;
+        long queueOffset;
+        try {
+<span class="fc" id="L433">            beginTimeInDledgerLock = this.defaultMessageStore.getSystemClock().now();</span>
+<span class="fc" id="L434">            encodeResult = this.messageSerializer.serialize(msg);</span>
+<span class="fc" id="L435">            queueOffset = getQueueOffsetByKey(encodeResult.queueOffsetKey, tranType);</span>
+<span class="fc" id="L436">            encodeResult.setQueueOffsetKey(queueOffset);</span>
+<span class="pc bpc" id="L437" title="1 of 2 branches missed.">            if (encodeResult.status != AppendMessageStatus.PUT_OK) {</span>
+<span class="nc" id="L438">                return new PutMessageResult(PutMessageStatus.MESSAGE_ILLEGAL, new AppendMessageResult(encodeResult.status));</span>
+            }
+<span class="fc" id="L440">            AppendEntryRequest request = new AppendEntryRequest();</span>
+<span class="fc" id="L441">            request.setGroup(dLedgerConfig.getGroup());</span>
+<span class="fc" id="L442">            request.setRemoteId(dLedgerServer.getMemberState().getSelfId());</span>
+<span class="fc" id="L443">            request.setBody(encodeResult.getData());</span>
+<span class="fc" id="L444">            dledgerFuture = (AppendFuture&lt;AppendEntryResponse&gt;) dLedgerServer.handleAppend(request);</span>
+<span class="pc bpc" id="L445" title="1 of 2 branches missed.">            if (dledgerFuture.getPos() == -1) {</span>
+<span class="nc" id="L446">                return new PutMessageResult(PutMessageStatus.OS_PAGECACHE_BUSY, new AppendMessageResult(AppendMessageStatus.UNKNOWN_ERROR));</span>
+            }
+<span class="fc" id="L448">            long wroteOffset = dledgerFuture.getPos() + DLedgerEntry.BODY_OFFSET;</span>
+
+<span class="fc bfc" id="L450" title="All 2 branches covered.">            int msgIdLength = (msg.getSysFlag() &amp; MessageSysFlag.STOREHOSTADDRESS_V6_FLAG) == 0 ? 4 + 4 + 8 : 16 + 4 + 8;</span>
+<span class="fc" id="L451">            ByteBuffer buffer = ByteBuffer.allocate(msgIdLength);</span>
+
+<span class="fc" id="L453">            String msgId = MessageDecoder.createMessageId(buffer, msg.getStoreHostBytes(), wroteOffset);</span>
+<span class="fc" id="L454">            elapsedTimeInLock = this.defaultMessageStore.getSystemClock().now() - beginTimeInDledgerLock;</span>
+<span class="fc" id="L455">            appendResult = new AppendMessageResult(AppendMessageStatus.PUT_OK, wroteOffset, encodeResult.getData().length, msgId, System.currentTimeMillis(), queueOffset, elapsedTimeInLock);</span>
+<span class="pc bpc" id="L456" title="2 of 3 branches missed.">            switch (tranType) {</span>
+                case MessageSysFlag.TRANSACTION_PREPARED_TYPE:
+                case MessageSysFlag.TRANSACTION_ROLLBACK_TYPE:
+<span class="nc" id="L459">                    break;</span>
+                case MessageSysFlag.TRANSACTION_NOT_TYPE:
+                case MessageSysFlag.TRANSACTION_COMMIT_TYPE:
+                    // The next update ConsumeQueue information
+<span class="fc" id="L463">                    DLedgerCommitLog.this.topicQueueTable.put(encodeResult.queueOffsetKey, queueOffset + 1);</span>
+<span class="fc" id="L464">                    break;</span>
+                default:
+                    break;
+            }
+<span class="nc" id="L468">        } catch (Exception e) {</span>
+<span class="nc" id="L469">            log.error(&quot;Put message error&quot;, e);</span>
+<span class="nc" id="L470">            return new PutMessageResult(PutMessageStatus.UNKNOWN_ERROR, new AppendMessageResult(AppendMessageStatus.UNKNOWN_ERROR));</span>
+        } finally {
+<span class="fc" id="L472">            beginTimeInDledgerLock = 0;</span>
+<span class="fc" id="L473">            putMessageLock.unlock();</span>
+        }
+
+<span class="pc bpc" id="L476" title="1 of 2 branches missed.">        if (elapsedTimeInLock &gt; 500) {</span>
+<span class="nc" id="L477">            log.warn(&quot;[NOTIFYME]putMessage in lock cost time(ms)={}, bodyLength={} AppendMessageResult={}&quot;, elapsedTimeInLock, msg.getBody().length, appendResult);</span>
+        }
+
+<span class="fc" id="L480">        PutMessageStatus putMessageStatus = PutMessageStatus.UNKNOWN_ERROR;</span>
+        try {
+<span class="fc" id="L482">            AppendEntryResponse appendEntryResponse = dledgerFuture.get(3, TimeUnit.SECONDS);</span>
+<span class="pc bpc" id="L483" title="3 of 5 branches missed.">            switch (DLedgerResponseCode.valueOf(appendEntryResponse.getCode())) {</span>
+                case SUCCESS:
+<span class="fc" id="L485">                    putMessageStatus = PutMessageStatus.PUT_OK;</span>
+<span class="fc" id="L486">                    break;</span>
+                case INCONSISTENT_LEADER:
+                case NOT_LEADER:
+                case LEADER_NOT_READY:
+                case DISK_FULL:
+<span class="nc" id="L491">                    putMessageStatus = PutMessageStatus.SERVICE_NOT_AVAILABLE;</span>
+<span class="nc" id="L492">                    break;</span>
+                case WAIT_QUORUM_ACK_TIMEOUT:
+                    //Do not return flush_slave_timeout to the client, for the ons client will ignore it.
+<span class="fc" id="L495">                    putMessageStatus = PutMessageStatus.OS_PAGECACHE_BUSY;</span>
+<span class="fc" id="L496">                    break;</span>
+                case LEADER_PENDING_FULL:
+<span class="nc" id="L498">                    putMessageStatus = PutMessageStatus.OS_PAGECACHE_BUSY;</span>
+                    break;
+            }
+<span class="nc" id="L501">        } catch (Throwable t) {</span>
+<span class="nc" id="L502">            log.error(&quot;Failed to get dledger append result&quot;, t);</span>
+<span class="fc" id="L503">        }</span>
+
+<span class="fc" id="L505">        PutMessageResult putMessageResult = new PutMessageResult(putMessageStatus, appendResult);</span>
+<span class="fc bfc" id="L506" title="All 2 branches covered.">        if (putMessageStatus == PutMessageStatus.PUT_OK) {</span>
+            // Statistics
+<span class="fc" id="L508">            storeStatsService.getSinglePutMessageTopicTimesTotal(msg.getTopic()).incrementAndGet();</span>
+<span class="fc" id="L509">            storeStatsService.getSinglePutMessageTopicSizeTotal(topic).addAndGet(appendResult.getWroteBytes());</span>
+        }
+<span class="fc" id="L511">        return putMessageResult;</span>
+    }
+
+    @Override
+    public PutMessageResult putMessages(final MessageExtBatch messageExtBatch) {
+<span class="fc" id="L516">        final int tranType = MessageSysFlag.getTransactionValue(messageExtBatch.getSysFlag());</span>
+
+<span class="pc bpc" id="L518" title="1 of 2 branches missed.">        if (tranType != MessageSysFlag.TRANSACTION_NOT_TYPE) {</span>
+<span class="nc" id="L519">            return new PutMessageResult(PutMessageStatus.MESSAGE_ILLEGAL, null);</span>
+        }
+<span class="pc bpc" id="L521" title="1 of 2 branches missed.">        if (messageExtBatch.getDelayTimeLevel() &gt; 0) {</span>
+<span class="nc" id="L522">            return new PutMessageResult(PutMessageStatus.MESSAGE_ILLEGAL, null);</span>
+        }
+
+        // Set the storage time
+<span class="fc" id="L526">        messageExtBatch.setStoreTimestamp(System.currentTimeMillis());</span>
+
+<span class="fc" id="L528">        StoreStatsService storeStatsService = this.defaultMessageStore.getStoreStatsService();</span>
+
+<span class="fc" id="L530">        InetSocketAddress bornSocketAddress = (InetSocketAddress) messageExtBatch.getBornHost();</span>
+<span class="fc bfc" id="L531" title="All 2 branches covered.">        if (bornSocketAddress.getAddress() instanceof Inet6Address) {</span>
+<span class="fc" id="L532">            messageExtBatch.setBornHostV6Flag();</span>
+        }
+
+<span class="fc" id="L535">        InetSocketAddress storeSocketAddress = (InetSocketAddress) messageExtBatch.getStoreHost();</span>
+<span class="fc bfc" id="L536" title="All 2 branches covered.">        if (storeSocketAddress.getAddress() instanceof Inet6Address) {</span>
+<span class="fc" id="L537">            messageExtBatch.setStoreHostAddressV6Flag();</span>
+        }
+
+        // Back to Results
+        AppendMessageResult appendResult;
+        BatchAppendFuture&lt;AppendEntryResponse&gt; dledgerFuture;
+        EncodeResult encodeResult;
+
+<span class="fc" id="L545">        putMessageLock.lock(); //spin or ReentrantLock ,depending on store config</span>
+<span class="fc" id="L546">        msgIdBuilder.setLength(0);</span>
+        long elapsedTimeInLock;
+        long queueOffset;
+<span class="fc" id="L549">        long msgNum = 0;</span>
+        try {
+<span class="fc" id="L551">            beginTimeInDledgerLock = this.defaultMessageStore.getSystemClock().now();</span>
+<span class="fc" id="L552">            encodeResult = this.messageSerializer.serialize(messageExtBatch);</span>
+<span class="fc" id="L553">            queueOffset = topicQueueTable.get(encodeResult.queueOffsetKey);</span>
+<span class="pc bpc" id="L554" title="1 of 2 branches missed.">            if (encodeResult.status != AppendMessageStatus.PUT_OK) {</span>
+<span class="nc" id="L555">                return new PutMessageResult(PutMessageStatus.MESSAGE_ILLEGAL, new AppendMessageResult(encodeResult</span>
+<span class="nc" id="L556">                        .status));</span>
+            }
+<span class="fc" id="L558">            BatchAppendEntryRequest request = new BatchAppendEntryRequest();</span>
+<span class="fc" id="L559">            request.setGroup(dLedgerConfig.getGroup());</span>
+<span class="fc" id="L560">            request.setRemoteId(dLedgerServer.getMemberState().getSelfId());</span>
+<span class="fc" id="L561">            request.setBatchMsgs(encodeResult.batchData);</span>
+<span class="fc" id="L562">            dledgerFuture = (BatchAppendFuture&lt;AppendEntryResponse&gt;) dLedgerServer.handleAppend(request);</span>
+<span class="pc bpc" id="L563" title="1 of 2 branches missed.">            if (dledgerFuture.getPos() == -1) {</span>
+<span class="nc" id="L564">                log.warn(&quot;HandleAppend return false due to error code {}&quot;, dledgerFuture.get().getCode());</span>
+<span class="nc" id="L565">                return new PutMessageResult(PutMessageStatus.OS_PAGECACHE_BUSY, new AppendMessageResult(AppendMessageStatus.UNKNOWN_ERROR));</span>
+            }
+<span class="fc" id="L567">            long wroteOffset = 0;</span>
+
+<span class="fc bfc" id="L569" title="All 2 branches covered.">            int msgIdLength = (messageExtBatch.getSysFlag() &amp; MessageSysFlag.STOREHOSTADDRESS_V6_FLAG) == 0 ? 4 + 4 + 8 : 16 + 4 + 8;</span>
+<span class="fc" id="L570">            ByteBuffer buffer = ByteBuffer.allocate(msgIdLength);</span>
+
+<span class="fc" id="L572">            boolean isFirstOffset = true;</span>
+<span class="fc" id="L573">            long firstWroteOffset = 0;</span>
+<span class="fc bfc" id="L574" title="All 2 branches covered.">            for (long pos : dledgerFuture.getPositions()) {</span>
+<span class="fc" id="L575">                wroteOffset = pos + DLedgerEntry.BODY_OFFSET;</span>
+<span class="fc bfc" id="L576" title="All 2 branches covered.">                if (isFirstOffset) {</span>
+<span class="fc" id="L577">                    firstWroteOffset = wroteOffset;</span>
+<span class="fc" id="L578">                    isFirstOffset = false;</span>
+                }
+<span class="fc" id="L580">                String msgId = MessageDecoder.createMessageId(buffer, messageExtBatch.getStoreHostBytes(), wroteOffset);</span>
+<span class="fc bfc" id="L581" title="All 2 branches covered.">                if (msgIdBuilder.length() &gt; 0) {</span>
+<span class="fc" id="L582">                    msgIdBuilder.append(',').append(msgId);</span>
+                } else {
+<span class="fc" id="L584">                    msgIdBuilder.append(msgId);</span>
+                }
+<span class="fc" id="L586">                msgNum++;</span>
+            }
+
+<span class="fc" id="L589">            elapsedTimeInLock = this.defaultMessageStore.getSystemClock().now() - beginTimeInDledgerLock;</span>
+<span class="fc" id="L590">            appendResult = new AppendMessageResult(AppendMessageStatus.PUT_OK, firstWroteOffset, encodeResult.totalMsgLen,</span>
+<span class="fc" id="L591">                    msgIdBuilder.toString(), System.currentTimeMillis(), queueOffset, elapsedTimeInLock);</span>
+<span class="fc" id="L592">            DLedgerCommitLog.this.topicQueueTable.put(encodeResult.queueOffsetKey, queueOffset + msgNum);</span>
+<span class="nc" id="L593">        } catch (Exception e) {</span>
+<span class="nc" id="L594">            log.error(&quot;Put message error&quot;, e);</span>
+<span class="nc" id="L595">            return new PutMessageResult(PutMessageStatus.UNKNOWN_ERROR, new AppendMessageResult(AppendMessageStatus</span>
+                    .UNKNOWN_ERROR));
+        } finally {
+<span class="fc" id="L598">            beginTimeInDledgerLock = 0;</span>
+<span class="fc" id="L599">            putMessageLock.unlock();</span>
+        }
+
+<span class="pc bpc" id="L602" title="1 of 2 branches missed.">        if (elapsedTimeInLock &gt; 500) {</span>
+<span class="nc" id="L603">            log.warn(&quot;[NOTIFYME]putMessage in lock cost time(ms)={}, bodyLength={} AppendMessageResult={}&quot;,</span>
+<span class="nc" id="L604">                    elapsedTimeInLock, messageExtBatch.getBody().length, appendResult);</span>
+        }
+
+<span class="fc" id="L607">        PutMessageStatus putMessageStatus = PutMessageStatus.UNKNOWN_ERROR;</span>
+        try {
+<span class="fc" id="L609">            AppendEntryResponse appendEntryResponse = dledgerFuture.get(3, TimeUnit.SECONDS);</span>
+<span class="pc bpc" id="L610" title="4 of 5 branches missed.">            switch (DLedgerResponseCode.valueOf(appendEntryResponse.getCode())) {</span>
+                case SUCCESS:
+<span class="fc" id="L612">                    putMessageStatus = PutMessageStatus.PUT_OK;</span>
+<span class="fc" id="L613">                    break;</span>
+                case INCONSISTENT_LEADER:
+                case NOT_LEADER:
+                case LEADER_NOT_READY:
+                case DISK_FULL:
+<span class="nc" id="L618">                    putMessageStatus = PutMessageStatus.SERVICE_NOT_AVAILABLE;</span>
+<span class="nc" id="L619">                    break;</span>
+                case WAIT_QUORUM_ACK_TIMEOUT:
+                    //Do not return flush_slave_timeout to the client, for the ons client will ignore it.
+<span class="nc" id="L622">                    putMessageStatus = PutMessageStatus.OS_PAGECACHE_BUSY;</span>
+<span class="nc" id="L623">                    break;</span>
+                case LEADER_PENDING_FULL:
+<span class="nc" id="L625">                    putMessageStatus = PutMessageStatus.OS_PAGECACHE_BUSY;</span>
+                    break;
+            }
+<span class="nc" id="L628">        } catch (Throwable t) {</span>
+<span class="nc" id="L629">            log.error(&quot;Failed to get dledger append result&quot;, t);</span>
+<span class="fc" id="L630">        }</span>
+
+<span class="fc" id="L632">        PutMessageResult putMessageResult = new PutMessageResult(putMessageStatus, appendResult);</span>
+<span class="pc bpc" id="L633" title="1 of 2 branches missed.">        if (putMessageStatus == PutMessageStatus.PUT_OK) {</span>
+            // Statistics
+<span class="fc" id="L635">            storeStatsService.getSinglePutMessageTopicTimesTotal(messageExtBatch.getTopic()).addAndGet(msgNum);</span>
+<span class="fc" id="L636">            storeStatsService.getSinglePutMessageTopicSizeTotal(messageExtBatch.getTopic()).addAndGet(encodeResult.totalMsgLen);</span>
+        }
+<span class="fc" id="L638">        return putMessageResult;</span>
+    }
+
+    @Override
+    public CompletableFuture&lt;PutMessageResult&gt; asyncPutMessage(MessageExtBrokerInner msg) {
+
+<span class="fc" id="L644">        StoreStatsService storeStatsService = this.defaultMessageStore.getStoreStatsService();</span>
+
+<span class="fc" id="L646">        final int tranType = MessageSysFlag.getTransactionValue(msg.getSysFlag());</span>
+
+<span class="fc" id="L648">        setMessageInfo(msg, tranType);</span>
+
+<span class="fc" id="L650">        final String finalTopic = msg.getTopic();</span>
+
+        // Back to Results
+        AppendMessageResult appendResult;
+        AppendFuture&lt;AppendEntryResponse&gt; dledgerFuture;
+        EncodeResult encodeResult;
+
+<span class="fc" id="L657">        encodeResult = this.messageSerializer.serialize(msg);</span>
+<span class="pc bpc" id="L658" title="1 of 2 branches missed.">        if (encodeResult.status != AppendMessageStatus.PUT_OK) {</span>
+<span class="nc" id="L659">            return CompletableFuture.completedFuture(new PutMessageResult(PutMessageStatus.MESSAGE_ILLEGAL, new AppendMessageResult(encodeResult.status)));</span>
+        }
+<span class="fc" id="L661">        putMessageLock.lock(); //spin or ReentrantLock ,depending on store config</span>
+        long elapsedTimeInLock;
+        long queueOffset;
+        try {
+<span class="fc" id="L665">            beginTimeInDledgerLock = this.defaultMessageStore.getSystemClock().now();</span>
+<span class="fc" id="L666">            queueOffset = getQueueOffsetByKey(encodeResult.queueOffsetKey, tranType);</span>
+<span class="fc" id="L667">            encodeResult.setQueueOffsetKey(queueOffset);</span>
+<span class="fc" id="L668">            AppendEntryRequest request = new AppendEntryRequest();</span>
+<span class="fc" id="L669">            request.setGroup(dLedgerConfig.getGroup());</span>
+<span class="fc" id="L670">            request.setRemoteId(dLedgerServer.getMemberState().getSelfId());</span>
+<span class="fc" id="L671">            request.setBody(encodeResult.getData());</span>
+<span class="fc" id="L672">            dledgerFuture = (AppendFuture&lt;AppendEntryResponse&gt;) dLedgerServer.handleAppend(request);</span>
+<span class="pc bpc" id="L673" title="1 of 2 branches missed.">            if (dledgerFuture.getPos() == -1) {</span>
+<span class="nc" id="L674">                return CompletableFuture.completedFuture(new PutMessageResult(PutMessageStatus.OS_PAGECACHE_BUSY, new AppendMessageResult(AppendMessageStatus.UNKNOWN_ERROR)));</span>
+            }
+<span class="fc" id="L676">            long wroteOffset = dledgerFuture.getPos() + DLedgerEntry.BODY_OFFSET;</span>
+
+<span class="fc bfc" id="L678" title="All 2 branches covered.">            int msgIdLength = (msg.getSysFlag() &amp; MessageSysFlag.STOREHOSTADDRESS_V6_FLAG) == 0 ? 4 + 4 + 8 : 16 + 4 + 8;</span>
+<span class="fc" id="L679">            ByteBuffer buffer = ByteBuffer.allocate(msgIdLength);</span>
+
+<span class="fc" id="L681">            String msgId = MessageDecoder.createMessageId(buffer, msg.getStoreHostBytes(), wroteOffset);</span>
+<span class="fc" id="L682">            elapsedTimeInLock = this.defaultMessageStore.getSystemClock().now() - beginTimeInDledgerLock;</span>
+<span class="fc" id="L683">            appendResult = new AppendMessageResult(AppendMessageStatus.PUT_OK, wroteOffset, encodeResult.getData().length, msgId, System.currentTimeMillis(), queueOffset, elapsedTimeInLock);</span>
+<span class="pc bpc" id="L684" title="2 of 3 branches missed.">            switch (tranType) {</span>
+                case MessageSysFlag.TRANSACTION_PREPARED_TYPE:
+                case MessageSysFlag.TRANSACTION_ROLLBACK_TYPE:
+<span class="nc" id="L687">                    break;</span>
+                case MessageSysFlag.TRANSACTION_NOT_TYPE:
+                case MessageSysFlag.TRANSACTION_COMMIT_TYPE:
+                    // The next update ConsumeQueue information
+<span class="fc" id="L691">                    DLedgerCommitLog.this.topicQueueTable.put(encodeResult.queueOffsetKey, queueOffset + 1);</span>
+<span class="fc" id="L692">                    break;</span>
+                default:
+                    break;
+            }
+<span class="nc" id="L696">        } catch (Exception e) {</span>
+<span class="nc" id="L697">            log.error(&quot;Put message error&quot;, e);</span>
+<span class="nc" id="L698">            return CompletableFuture.completedFuture(new PutMessageResult(PutMessageStatus.UNKNOWN_ERROR, new AppendMessageResult(AppendMessageStatus.UNKNOWN_ERROR)));</span>
+        } finally {
+<span class="fc" id="L700">            beginTimeInDledgerLock = 0;</span>
+<span class="fc" id="L701">            putMessageLock.unlock();</span>
+        }
+
+<span class="pc bpc" id="L704" title="1 of 2 branches missed.">        if (elapsedTimeInLock &gt; 500) {</span>
+<span class="nc" id="L705">            log.warn(&quot;[NOTIFYME]putMessage in lock cost time(ms)={}, bodyLength={} AppendMessageResult={}&quot;, elapsedTimeInLock, msg.getBody().length, appendResult);</span>
+        }
+
+<span class="fc" id="L708">        return dledgerFuture.thenApply(appendEntryResponse -&gt; {</span>
+<span class="fc" id="L709">            PutMessageStatus putMessageStatus = PutMessageStatus.UNKNOWN_ERROR;</span>
+<span class="pc bpc" id="L710" title="4 of 5 branches missed.">            switch (DLedgerResponseCode.valueOf(appendEntryResponse.getCode())) {</span>
+                case SUCCESS:
+<span class="fc" id="L712">                    putMessageStatus = PutMessageStatus.PUT_OK;</span>
+<span class="fc" id="L713">                    break;</span>
+                case INCONSISTENT_LEADER:
+                case NOT_LEADER:
+                case LEADER_NOT_READY:
+                case DISK_FULL:
+<span class="nc" id="L718">                    putMessageStatus = PutMessageStatus.SERVICE_NOT_AVAILABLE;</span>
+<span class="nc" id="L719">                    break;</span>
+                case WAIT_QUORUM_ACK_TIMEOUT:
+                    //Do not return flush_slave_timeout to the client, for the ons client will ignore it.
+<span class="nc" id="L722">                    putMessageStatus = PutMessageStatus.OS_PAGECACHE_BUSY;</span>
+<span class="nc" id="L723">                    break;</span>
+                case LEADER_PENDING_FULL:
+<span class="nc" id="L725">                    putMessageStatus = PutMessageStatus.OS_PAGECACHE_BUSY;</span>
+                    break;
+            }
+<span class="fc" id="L728">            PutMessageResult putMessageResult = new PutMessageResult(putMessageStatus, appendResult);</span>
+<span class="pc bpc" id="L729" title="1 of 2 branches missed.">            if (putMessageStatus == PutMessageStatus.PUT_OK) {</span>
+                // Statistics
+<span class="fc" id="L731">                storeStatsService.getSinglePutMessageTopicTimesTotal(finalTopic).incrementAndGet();</span>
+<span class="fc" id="L732">                storeStatsService.getSinglePutMessageTopicSizeTotal(msg.getTopic()).addAndGet(appendResult.getWroteBytes());</span>
+            }
+<span class="fc" id="L734">            return putMessageResult;</span>
+        });
+    }
+
+    @Override
+    public CompletableFuture&lt;PutMessageResult&gt; asyncPutMessages(MessageExtBatch messageExtBatch) {
+<span class="fc" id="L740">        final int tranType = MessageSysFlag.getTransactionValue(messageExtBatch.getSysFlag());</span>
+
+<span class="pc bpc" id="L742" title="1 of 2 branches missed.">        if (tranType != MessageSysFlag.TRANSACTION_NOT_TYPE) {</span>
+<span class="nc" id="L743">            return CompletableFuture.completedFuture(new PutMessageResult(PutMessageStatus.MESSAGE_ILLEGAL, null));</span>
+        }
+<span class="pc bpc" id="L745" title="1 of 2 branches missed.">        if (messageExtBatch.getDelayTimeLevel() &gt; 0) {</span>
+<span class="nc" id="L746">            return CompletableFuture.completedFuture(new PutMessageResult(PutMessageStatus.MESSAGE_ILLEGAL, null));</span>
+        }
+
+        // Set the storage time
+<span class="fc" id="L750">        messageExtBatch.setStoreTimestamp(System.currentTimeMillis());</span>
+
+<span class="fc" id="L752">        StoreStatsService storeStatsService = this.defaultMessageStore.getStoreStatsService();</span>
+
+<span class="fc" id="L754">        InetSocketAddress bornSocketAddress = (InetSocketAddress) messageExtBatch.getBornHost();</span>
+<span class="fc bfc" id="L755" title="All 2 branches covered.">        if (bornSocketAddress.getAddress() instanceof Inet6Address) {</span>
+<span class="fc" id="L756">            messageExtBatch.setBornHostV6Flag();</span>
+        }
+
+<span class="fc" id="L759">        InetSocketAddress storeSocketAddress = (InetSocketAddress) messageExtBatch.getStoreHost();</span>
+<span class="fc bfc" id="L760" title="All 2 branches covered.">        if (storeSocketAddress.getAddress() instanceof Inet6Address) {</span>
+<span class="fc" id="L761">            messageExtBatch.setStoreHostAddressV6Flag();</span>
+        }
+
+        // Back to Results
+        AppendMessageResult appendResult;
+        BatchAppendFuture&lt;AppendEntryResponse&gt; dledgerFuture;
+        EncodeResult encodeResult;
+
+<span class="fc" id="L769">        encodeResult = this.messageSerializer.serialize(messageExtBatch);</span>
+<span class="pc bpc" id="L770" title="1 of 2 branches missed.">        if (encodeResult.status != AppendMessageStatus.PUT_OK) {</span>
+<span class="nc" id="L771">            return CompletableFuture.completedFuture(new PutMessageResult(PutMessageStatus.MESSAGE_ILLEGAL, new AppendMessageResult(encodeResult</span>
+<span class="nc" id="L772">                    .status)));</span>
+        }
+
+<span class="fc" id="L775">        putMessageLock.lock(); //spin or ReentrantLock ,depending on store config</span>
+<span class="fc" id="L776">        msgIdBuilder.setLength(0);</span>
+        long elapsedTimeInLock;
+        long queueOffset;
+<span class="fc" id="L779">        long msgNum = 0;</span>
+        try {
+<span class="fc" id="L781">            beginTimeInDledgerLock = this.defaultMessageStore.getSystemClock().now();</span>
+<span class="fc" id="L782">            queueOffset = topicQueueTable.get(encodeResult.queueOffsetKey);</span>
+<span class="fc" id="L783">            BatchAppendEntryRequest request = new BatchAppendEntryRequest();</span>
+<span class="fc" id="L784">            request.setGroup(dLedgerConfig.getGroup());</span>
+<span class="fc" id="L785">            request.setRemoteId(dLedgerServer.getMemberState().getSelfId());</span>
+<span class="fc" id="L786">            request.setBatchMsgs(encodeResult.batchData);</span>
+<span class="fc" id="L787">            dledgerFuture = (BatchAppendFuture&lt;AppendEntryResponse&gt;) dLedgerServer.handleAppend(request);</span>
+<span class="pc bpc" id="L788" title="1 of 2 branches missed.">            if (dledgerFuture.getPos() == -1) {</span>
+<span class="nc" id="L789">                log.warn(&quot;HandleAppend return false due to error code {}&quot;, dledgerFuture.get().getCode());</span>
+<span class="nc" id="L790">                return CompletableFuture.completedFuture(new PutMessageResult(PutMessageStatus.OS_PAGECACHE_BUSY, new AppendMessageResult(AppendMessageStatus.UNKNOWN_ERROR)));</span>
+            }
+<span class="fc" id="L792">            long wroteOffset = 0;</span>
+
+<span class="fc bfc" id="L794" title="All 2 branches covered.">            int msgIdLength = (messageExtBatch.getSysFlag() &amp; MessageSysFlag.STOREHOSTADDRESS_V6_FLAG) == 0 ? 4 + 4 + 8 : 16 + 4 + 8;</span>
+<span class="fc" id="L795">            ByteBuffer buffer = ByteBuffer.allocate(msgIdLength);</span>
+
+<span class="fc" id="L797">            boolean isFirstOffset = true;</span>
+<span class="fc" id="L798">            long firstWroteOffset = 0;</span>
+<span class="fc bfc" id="L799" title="All 2 branches covered.">            for (long pos : dledgerFuture.getPositions()) {</span>
+<span class="fc" id="L800">                wroteOffset = pos + DLedgerEntry.BODY_OFFSET;</span>
+<span class="fc bfc" id="L801" title="All 2 branches covered.">                if (isFirstOffset) {</span>
+<span class="fc" id="L802">                    firstWroteOffset = wroteOffset;</span>
+<span class="fc" id="L803">                    isFirstOffset = false;</span>
+                }
+<span class="fc" id="L805">                String msgId = MessageDecoder.createMessageId(buffer, messageExtBatch.getStoreHostBytes(), wroteOffset);</span>
+<span class="fc bfc" id="L806" title="All 2 branches covered.">                if (msgIdBuilder.length() &gt; 0) {</span>
+<span class="fc" id="L807">                    msgIdBuilder.append(',').append(msgId);</span>
+                } else {
+<span class="fc" id="L809">                    msgIdBuilder.append(msgId);</span>
+                }
+<span class="fc" id="L811">                msgNum++;</span>
+            }
+
+<span class="fc" id="L814">            elapsedTimeInLock = this.defaultMessageStore.getSystemClock().now() - beginTimeInDledgerLock;</span>
+<span class="fc" id="L815">            appendResult = new AppendMessageResult(AppendMessageStatus.PUT_OK, firstWroteOffset, encodeResult.totalMsgLen,</span>
+<span class="fc" id="L816">                    msgIdBuilder.toString(), System.currentTimeMillis(), queueOffset, elapsedTimeInLock);</span>
+<span class="fc" id="L817">            DLedgerCommitLog.this.topicQueueTable.put(encodeResult.queueOffsetKey, queueOffset + msgNum);</span>
+<span class="nc" id="L818">        } catch (Exception e) {</span>
+<span class="nc" id="L819">            log.error(&quot;Put message error&quot;, e);</span>
+<span class="nc" id="L820">            return CompletableFuture.completedFuture(new PutMessageResult(PutMessageStatus.UNKNOWN_ERROR, new AppendMessageResult(AppendMessageStatus.UNKNOWN_ERROR)));</span>
+        } finally {
+<span class="fc" id="L822">            beginTimeInDledgerLock = 0;</span>
+<span class="fc" id="L823">            putMessageLock.unlock();</span>
+        }
+
+<span class="pc bpc" id="L826" title="1 of 2 branches missed.">        if (elapsedTimeInLock &gt; 500) {</span>
+<span class="nc" id="L827">            log.warn(&quot;[NOTIFYME]putMessage in lock cost time(ms)={}, bodyLength={} AppendMessageResult={}&quot;,</span>
+<span class="nc" id="L828">                    elapsedTimeInLock, messageExtBatch.getBody().length, appendResult);</span>
+        }
+
+<span class="fc" id="L831">        return dledgerFuture.thenApply(appendEntryResponse -&gt; {</span>
+<span class="fc" id="L832">            PutMessageStatus putMessageStatus = PutMessageStatus.UNKNOWN_ERROR;</span>
+<span class="pc bpc" id="L833" title="4 of 5 branches missed.">            switch (DLedgerResponseCode.valueOf(appendEntryResponse.getCode())) {</span>
+                case SUCCESS:
+<span class="fc" id="L835">                    putMessageStatus = PutMessageStatus.PUT_OK;</span>
+<span class="fc" id="L836">                    break;</span>
+                case INCONSISTENT_LEADER:
+                case NOT_LEADER:
+                case LEADER_NOT_READY:
+                case DISK_FULL:
+<span class="nc" id="L841">                    putMessageStatus = PutMessageStatus.SERVICE_NOT_AVAILABLE;</span>
+<span class="nc" id="L842">                    break;</span>
+                case WAIT_QUORUM_ACK_TIMEOUT:
+                    //Do not return flush_slave_timeout to the client, for the ons client will ignore it.
+<span class="nc" id="L845">                    putMessageStatus = PutMessageStatus.OS_PAGECACHE_BUSY;</span>
+<span class="nc" id="L846">                    break;</span>
+                case LEADER_PENDING_FULL:
+<span class="nc" id="L848">                    putMessageStatus = PutMessageStatus.OS_PAGECACHE_BUSY;</span>
+                    break;
+            }
+<span class="fc" id="L851">            PutMessageResult putMessageResult = new PutMessageResult(putMessageStatus, appendResult);</span>
+<span class="pc bpc" id="L852" title="1 of 2 branches missed.">            if (putMessageStatus == PutMessageStatus.PUT_OK) {</span>
+                // Statistics
+<span class="fc" id="L854">                storeStatsService.getSinglePutMessageTopicTimesTotal(messageExtBatch.getTopic()).incrementAndGet();</span>
+<span class="fc" id="L855">                storeStatsService.getSinglePutMessageTopicSizeTotal(messageExtBatch.getTopic()).addAndGet(appendResult.getWroteBytes());</span>
+            }
+<span class="fc" id="L857">            return putMessageResult;</span>
+        });
+    }
+
+    @Override
+    public SelectMappedBufferResult getMessage(final long offset, final int size) {
+<span class="fc bfc" id="L863" title="All 2 branches covered.">        if (offset &lt; dividedCommitlogOffset) {</span>
+<span class="fc" id="L864">            return super.getMessage(offset, size);</span>
+        }
+<span class="fc" id="L866">        int mappedFileSize = this.dLedgerServer.getdLedgerConfig().getMappedFileSizeForEntryData();</span>
+<span class="pc bpc" id="L867" title="1 of 2 branches missed.">        MmapFile mappedFile = this.dLedgerFileList.findMappedFileByOffset(offset, offset == 0);</span>
+<span class="pc bpc" id="L868" title="1 of 2 branches missed.">        if (mappedFile != null) {</span>
+<span class="fc" id="L869">            int pos = (int) (offset % mappedFileSize);</span>
+<span class="fc" id="L870">            return convertSbr(mappedFile.selectMappedBuffer(pos, size));</span>
+        }
+<span class="nc" id="L872">        return null;</span>
+    }
+
+    @Override
+    public long rollNextFile(final long offset) {
+<span class="fc" id="L877">        int mappedFileSize = this.defaultMessageStore.getMessageStoreConfig().getMappedFileSizeCommitLog();</span>
+<span class="fc" id="L878">        return offset + mappedFileSize - offset % mappedFileSize;</span>
+    }
+
+    @Override
+    public HashMap&lt;String, Long&gt; getTopicQueueTable() {
+<span class="nc" id="L883">        return topicQueueTable;</span>
+    }
+
+    @Override
+    public void setTopicQueueTable(HashMap&lt;String, Long&gt; topicQueueTable) {
+<span class="fc" id="L888">        this.topicQueueTable = topicQueueTable;</span>
+<span class="fc" id="L889">    }</span>
+
+    @Override
+    public void destroy() {
+<span class="fc" id="L893">        super.destroy();</span>
+<span class="fc" id="L894">        dLedgerFileList.destroy();</span>
+<span class="fc" id="L895">    }</span>
+
+    @Override
+    public boolean appendData(long startOffset, byte[] data) {
+        //the old ha service will invoke method, here to prevent it
+<span class="nc" id="L900">        return false;</span>
+    }
+
+    @Override
+    public void checkSelf() {
+<span class="nc" id="L905">        dLedgerFileList.checkSelf();</span>
+<span class="nc" id="L906">    }</span>
+
+    @Override
+    public long lockTimeMills() {
+<span class="nc" id="L910">        long diff = 0;</span>
+<span class="nc" id="L911">        long begin = this.beginTimeInDledgerLock;</span>
+<span class="nc bnc" id="L912" title="All 2 branches missed.">        if (begin &gt; 0) {</span>
+<span class="nc" id="L913">            diff = this.defaultMessageStore.now() - begin;</span>
+        }
+
+<span class="nc bnc" id="L916" title="All 2 branches missed.">        if (diff &lt; 0) {</span>
+<span class="nc" id="L917">            diff = 0;</span>
+        }
+
+<span class="nc" id="L920">        return diff;</span>
+    }
+
+    private long getQueueOffsetByKey(String key, int tranType) {
+<span class="fc" id="L924">        Long queueOffset = DLedgerCommitLog.this.topicQueueTable.get(key);</span>
+<span class="fc bfc" id="L925" title="All 2 branches covered.">        if (null == queueOffset) {</span>
+<span class="fc" id="L926">            queueOffset = 0L;</span>
+<span class="fc" id="L927">            DLedgerCommitLog.this.topicQueueTable.put(key, queueOffset);</span>
+        }
+
+        // Transaction messages that require special handling
+<span class="pc bpc" id="L931" title="1 of 2 branches missed.">        switch (tranType) {</span>
+            // Prepared and Rollback message is not consumed, will not enter the
+            // consumer queuec
+            case MessageSysFlag.TRANSACTION_PREPARED_TYPE:
+            case MessageSysFlag.TRANSACTION_ROLLBACK_TYPE:
+<span class="nc" id="L936">                queueOffset = 0L;</span>
+<span class="nc" id="L937">                break;</span>
+            case MessageSysFlag.TRANSACTION_NOT_TYPE:
+            case MessageSysFlag.TRANSACTION_COMMIT_TYPE:
+            default:
+                break;
+        }
+<span class="fc" id="L943">        return queueOffset;</span>
+    }
+
+
+    class EncodeResult {
+        private String queueOffsetKey;
+        private ByteBuffer data;
+        private List&lt;byte[]&gt; batchData;
+        private AppendMessageStatus status;
+        private int totalMsgLen;
+
+<span class="fc" id="L954">        public EncodeResult(AppendMessageStatus status, ByteBuffer data, String queueOffsetKey) {</span>
+<span class="fc" id="L955">            this.data = data;</span>
+<span class="fc" id="L956">            this.status = status;</span>
+<span class="fc" id="L957">            this.queueOffsetKey = queueOffsetKey;</span>
+<span class="fc" id="L958">        }</span>
+
+        public void setQueueOffsetKey(long offset) {
+<span class="fc" id="L961">            data.putLong(MessageDecoder.QUEUE_OFFSET_POSITION, offset);</span>
+<span class="fc" id="L962">        }</span>
+
+        public byte[] getData() {
+<span class="fc" id="L965">            return data.array();</span>
+        }
+
+<span class="fc" id="L968">        public EncodeResult(AppendMessageStatus status, String queueOffsetKey, List&lt;byte[]&gt; batchData, int totalMsgLen) {</span>
+<span class="fc" id="L969">            this.batchData = batchData;</span>
+<span class="fc" id="L970">            this.status = status;</span>
+<span class="fc" id="L971">            this.queueOffsetKey = queueOffsetKey;</span>
+<span class="fc" id="L972">            this.totalMsgLen = totalMsgLen;</span>
+<span class="fc" id="L973">        }</span>
+    }
+
+    class MessageSerializer {
+
+        // The maximum length of the message
+        private final int maxMessageSize;
+        // Build Message Key
+<span class="fc" id="L981">        private final StringBuilder keyBuilder = new StringBuilder();</span>
+
+<span class="fc" id="L983">        MessageSerializer(final int size) {</span>
+<span class="fc" id="L984">            this.maxMessageSize = size;</span>
+<span class="fc" id="L985">        }</span>
+
+        public EncodeResult serialize(final MessageExtBrokerInner msgInner) {
+            // STORETIMESTAMP + STOREHOSTADDRESS + OFFSET &lt;br&gt;
+
+            // PHY OFFSET
+<span class="fc" id="L991">            long wroteOffset = 0;</span>
+
+<span class="fc" id="L993">            long queueOffset = 0;</span>
+
+<span class="fc" id="L995">            int sysflag = msgInner.getSysFlag();</span>
+
+<span class="fc bfc" id="L997" title="All 2 branches covered.">            int bornHostLength = (sysflag &amp; MessageSysFlag.BORNHOST_V6_FLAG) == 0 ? 4 + 4 : 16 + 4;</span>
+<span class="fc bfc" id="L998" title="All 2 branches covered.">            int storeHostLength = (sysflag &amp; MessageSysFlag.STOREHOSTADDRESS_V6_FLAG) == 0 ? 4 + 4 : 16 + 4;</span>
+<span class="fc" id="L999">            ByteBuffer bornHostHolder = ByteBuffer.allocate(bornHostLength);</span>
+<span class="fc" id="L1000">            ByteBuffer storeHostHolder = ByteBuffer.allocate(storeHostLength);</span>
+
+<span class="fc" id="L1002">            String key = msgInner.getTopic() + &quot;-&quot; + msgInner.getQueueId();</span>
+
+            /**
+             * Serialize message
+             */
+<span class="fc" id="L1007">            final byte[] propertiesData =</span>
+<span class="pc bpc" id="L1008" title="1 of 2 branches missed.">                msgInner.getPropertiesString() == null ? null : msgInner.getPropertiesString().getBytes(MessageDecoder.CHARSET_UTF8);</span>
+
+<span class="pc bpc" id="L1010" title="1 of 2 branches missed.">            final int propertiesLength = propertiesData == null ? 0 : propertiesData.length;</span>
+
+<span class="pc bpc" id="L1012" title="1 of 2 branches missed.">            if (propertiesLength &gt; Short.MAX_VALUE) {</span>
+<span class="nc" id="L1013">                log.warn(&quot;putMessage message properties length too long. length={}&quot;, propertiesData.length);</span>
+<span class="nc" id="L1014">                return new EncodeResult(AppendMessageStatus.PROPERTIES_SIZE_EXCEEDED, null, key);</span>
+            }
+
+<span class="fc" id="L1017">            final byte[] topicData = msgInner.getTopic().getBytes(MessageDecoder.CHARSET_UTF8);</span>
+<span class="fc" id="L1018">            final int topicLength = topicData.length;</span>
+
+<span class="pc bpc" id="L1020" title="1 of 2 branches missed.">            final int bodyLength = msgInner.getBody() == null ? 0 : msgInner.getBody().length;</span>
+
+<span class="fc" id="L1022">            final int msgLen = calMsgLength(msgInner.getSysFlag(), bodyLength, topicLength, propertiesLength);</span>
+
+<span class="fc" id="L1024">            ByteBuffer msgStoreItemMemory = ByteBuffer.allocate(msgLen);</span>
+
+            // Exceeds the maximum message
+<span class="pc bpc" id="L1027" title="1 of 2 branches missed.">            if (msgLen &gt; this.maxMessageSize) {</span>
+<span class="nc" id="L1028">                DLedgerCommitLog.log.warn(&quot;message size exceeded, msg total size: &quot; + msgLen + &quot;, msg body size: &quot; + bodyLength</span>
+                    + &quot;, maxMessageSize: &quot; + this.maxMessageSize);
+<span class="nc" id="L1030">                return new EncodeResult(AppendMessageStatus.MESSAGE_SIZE_EXCEEDED, null, key);</span>
+            }
+            // Initialization of storage space
+<span class="fc" id="L1033">            this.resetByteBuffer(msgStoreItemMemory, msgLen);</span>
+            // 1 TOTALSIZE
+<span class="fc" id="L1035">            msgStoreItemMemory.putInt(msgLen);</span>
+            // 2 MAGICCODE
+<span class="fc" id="L1037">            msgStoreItemMemory.putInt(DLedgerCommitLog.MESSAGE_MAGIC_CODE);</span>
+            // 3 BODYCRC
+<span class="fc" id="L1039">            msgStoreItemMemory.putInt(msgInner.getBodyCRC());</span>
+            // 4 QUEUEID
+<span class="fc" id="L1041">            msgStoreItemMemory.putInt(msgInner.getQueueId());</span>
+            // 5 FLAG
+<span class="fc" id="L1043">            msgStoreItemMemory.putInt(msgInner.getFlag());</span>
+            // 6 QUEUEOFFSET
+<span class="fc" id="L1045">            msgStoreItemMemory.putLong(queueOffset);</span>
+            // 7 PHYSICALOFFSET
+<span class="fc" id="L1047">            msgStoreItemMemory.putLong(wroteOffset);</span>
+            // 8 SYSFLAG
+<span class="fc" id="L1049">            msgStoreItemMemory.putInt(msgInner.getSysFlag());</span>
+            // 9 BORNTIMESTAMP
+<span class="fc" id="L1051">            msgStoreItemMemory.putLong(msgInner.getBornTimestamp());</span>
+            // 10 BORNHOST
+<span class="fc" id="L1053">            resetByteBuffer(bornHostHolder, bornHostLength);</span>
+<span class="fc" id="L1054">            msgStoreItemMemory.put(msgInner.getBornHostBytes(bornHostHolder));</span>
+            // 11 STORETIMESTAMP
+<span class="fc" id="L1056">            msgStoreItemMemory.putLong(msgInner.getStoreTimestamp());</span>
+            // 12 STOREHOSTADDRESS
+<span class="fc" id="L1058">            resetByteBuffer(storeHostHolder, storeHostLength);</span>
+<span class="fc" id="L1059">            msgStoreItemMemory.put(msgInner.getStoreHostBytes(storeHostHolder));</span>
+            //this.msgBatchMemory.put(msgInner.getStoreHostBytes());
+            // 13 RECONSUMETIMES
+<span class="fc" id="L1062">            msgStoreItemMemory.putInt(msgInner.getReconsumeTimes());</span>
+            // 14 Prepared Transaction Offset
+<span class="fc" id="L1064">            msgStoreItemMemory.putLong(msgInner.getPreparedTransactionOffset());</span>
+            // 15 BODY
+<span class="fc" id="L1066">            msgStoreItemMemory.putInt(bodyLength);</span>
+<span class="pc bpc" id="L1067" title="1 of 2 branches missed.">            if (bodyLength &gt; 0) {</span>
+<span class="fc" id="L1068">                msgStoreItemMemory.put(msgInner.getBody());</span>
+            }
+            // 16 TOPIC
+<span class="fc" id="L1071">            msgStoreItemMemory.put((byte) topicLength);</span>
+<span class="fc" id="L1072">            msgStoreItemMemory.put(topicData);</span>
+            // 17 PROPERTIES
+<span class="fc" id="L1074">            msgStoreItemMemory.putShort((short) propertiesLength);</span>
+<span class="pc bpc" id="L1075" title="1 of 2 branches missed.">            if (propertiesLength &gt; 0) {</span>
+<span class="nc" id="L1076">                msgStoreItemMemory.put(propertiesData);</span>
+            }
+<span class="fc" id="L1078">            return new EncodeResult(AppendMessageStatus.PUT_OK, msgStoreItemMemory, key);</span>
+        }
+
+        public EncodeResult serialize(final MessageExtBatch messageExtBatch) {
+<span class="fc" id="L1082">            keyBuilder.setLength(0);</span>
+<span class="fc" id="L1083">            keyBuilder.append(messageExtBatch.getTopic());</span>
+<span class="fc" id="L1084">            keyBuilder.append('-');</span>
+<span class="fc" id="L1085">            keyBuilder.append(messageExtBatch.getQueueId());</span>
+<span class="fc" id="L1086">            String key = keyBuilder.toString();</span>
+
+<span class="fc" id="L1088">            Long queueOffset = DLedgerCommitLog.this.topicQueueTable.get(key);</span>
+<span class="fc bfc" id="L1089" title="All 2 branches covered.">            if (null == queueOffset) {</span>
+<span class="fc" id="L1090">                queueOffset = 0L;</span>
+<span class="fc" id="L1091">                DLedgerCommitLog.this.topicQueueTable.put(key, queueOffset);</span>
+            }
+
+<span class="fc" id="L1094">            int totalMsgLen = 0;</span>
+<span class="fc" id="L1095">            ByteBuffer messagesByteBuff = messageExtBatch.wrap();</span>
+<span class="fc" id="L1096">            List&lt;byte[]&gt; batchBody = new LinkedList&lt;&gt;();</span>
+
+<span class="fc" id="L1098">            int sysFlag = messageExtBatch.getSysFlag();</span>
+<span class="fc bfc" id="L1099" title="All 2 branches covered.">            int bornHostLength = (sysFlag &amp; MessageSysFlag.BORNHOST_V6_FLAG) == 0 ? 4 + 4 : 16 + 4;</span>
+<span class="fc bfc" id="L1100" title="All 2 branches covered.">            int storeHostLength = (sysFlag &amp; MessageSysFlag.STOREHOSTADDRESS_V6_FLAG) == 0 ? 4 + 4 : 16 + 4;</span>
+<span class="fc" id="L1101">            ByteBuffer bornHostHolder = ByteBuffer.allocate(bornHostLength);</span>
+<span class="fc" id="L1102">            ByteBuffer storeHostHolder = ByteBuffer.allocate(storeHostLength);</span>
+
+<span class="fc bfc" id="L1104" title="All 2 branches covered.">            while (messagesByteBuff.hasRemaining()) {</span>
+                // 1 TOTALSIZE
+<span class="fc" id="L1106">                messagesByteBuff.getInt();</span>
+                // 2 MAGICCODE
+<span class="fc" id="L1108">                messagesByteBuff.getInt();</span>
+                // 3 BODYCRC
+<span class="fc" id="L1110">                messagesByteBuff.getInt();</span>
+                // 4 FLAG
+<span class="fc" id="L1112">                int flag = messagesByteBuff.getInt();</span>
+                // 5 BODY
+<span class="fc" id="L1114">                int bodyLen = messagesByteBuff.getInt();</span>
+<span class="fc" id="L1115">                int bodyPos = messagesByteBuff.position();</span>
+<span class="fc" id="L1116">                int bodyCrc = UtilAll.crc32(messagesByteBuff.array(), bodyPos, bodyLen);</span>
+<span class="fc" id="L1117">                messagesByteBuff.position(bodyPos + bodyLen);</span>
+                // 6 properties
+<span class="fc" id="L1119">                short propertiesLen = messagesByteBuff.getShort();</span>
+<span class="fc" id="L1120">                int propertiesPos = messagesByteBuff.position();</span>
+<span class="fc" id="L1121">                messagesByteBuff.position(propertiesPos + propertiesLen);</span>
+
+<span class="fc" id="L1123">                final byte[] topicData = messageExtBatch.getTopic().getBytes(MessageDecoder.CHARSET_UTF8);</span>
+
+<span class="fc" id="L1125">                final int topicLength = topicData.length;</span>
+
+<span class="fc" id="L1127">                final int msgLen = calMsgLength(messageExtBatch.getSysFlag(), bodyLen, topicLength, propertiesLen);</span>
+<span class="fc" id="L1128">                ByteBuffer msgStoreItemMemory = ByteBuffer.allocate(msgLen);</span>
+
+                // Exceeds the maximum message
+<span class="pc bpc" id="L1131" title="1 of 2 branches missed.">                if (msgLen &gt; this.maxMessageSize) {</span>
+<span class="nc" id="L1132">                    CommitLog.log.warn(&quot;message size exceeded, msg total size: &quot; + msgLen + &quot;, msg body size: &quot; +</span>
+                            bodyLen
+                            + &quot;, maxMessageSize: &quot; + this.maxMessageSize);
+<span class="nc" id="L1135">                    throw new RuntimeException(&quot;message size exceeded&quot;);</span>
+                }
+
+<span class="fc" id="L1138">                totalMsgLen += msgLen;</span>
+                // Determines whether there is sufficient free space
+<span class="pc bpc" id="L1140" title="1 of 2 branches missed.">                if (totalMsgLen &gt; maxMessageSize) {</span>
+<span class="nc" id="L1141">                    throw new RuntimeException(&quot;message size exceeded&quot;);</span>
+                }
+
+                // Initialization of storage space
+<span class="fc" id="L1145">                this.resetByteBuffer(msgStoreItemMemory, msgLen);</span>
+                // 1 TOTALSIZE
+<span class="fc" id="L1147">                msgStoreItemMemory.putInt(msgLen);</span>
+                // 2 MAGICCODE
+<span class="fc" id="L1149">                msgStoreItemMemory.putInt(DLedgerCommitLog.MESSAGE_MAGIC_CODE);</span>
+                // 3 BODYCRC
+<span class="fc" id="L1151">                msgStoreItemMemory.putInt(bodyCrc);</span>
+                // 4 QUEUEID
+<span class="fc" id="L1153">                msgStoreItemMemory.putInt(messageExtBatch.getQueueId());</span>
+                // 5 FLAG
+<span class="fc" id="L1155">                msgStoreItemMemory.putInt(flag);</span>
+                // 6 QUEUEOFFSET
+<span class="fc" id="L1157">                msgStoreItemMemory.putLong(queueOffset++);</span>
+                // 7 PHYSICALOFFSET
+<span class="fc" id="L1159">                msgStoreItemMemory.putLong(0);</span>
+                // 8 SYSFLAG
+<span class="fc" id="L1161">                msgStoreItemMemory.putInt(messageExtBatch.getSysFlag());</span>
+                // 9 BORNTIMESTAMP
+<span class="fc" id="L1163">                msgStoreItemMemory.putLong(messageExtBatch.getBornTimestamp());</span>
+                // 10 BORNHOST
+<span class="fc" id="L1165">                resetByteBuffer(bornHostHolder, bornHostLength);</span>
+<span class="fc" id="L1166">                msgStoreItemMemory.put(messageExtBatch.getBornHostBytes(bornHostHolder));</span>
+                // 11 STORETIMESTAMP
+<span class="fc" id="L1168">                msgStoreItemMemory.putLong(messageExtBatch.getStoreTimestamp());</span>
+                // 12 STOREHOSTADDRESS
+<span class="fc" id="L1170">                resetByteBuffer(storeHostHolder, storeHostLength);</span>
+<span class="fc" id="L1171">                msgStoreItemMemory.put(messageExtBatch.getStoreHostBytes(storeHostHolder));</span>
+                // 13 RECONSUMETIMES
+<span class="fc" id="L1173">                msgStoreItemMemory.putInt(messageExtBatch.getReconsumeTimes());</span>
+                // 14 Prepared Transaction Offset
+<span class="fc" id="L1175">                msgStoreItemMemory.putLong(0);</span>
+                // 15 BODY
+<span class="fc" id="L1177">                msgStoreItemMemory.putInt(bodyLen);</span>
+<span class="pc bpc" id="L1178" title="1 of 2 branches missed.">                if (bodyLen &gt; 0) {</span>
+<span class="fc" id="L1179">                    msgStoreItemMemory.put(messagesByteBuff.array(), bodyPos, bodyLen);</span>
+                }
+                // 16 TOPIC
+<span class="fc" id="L1182">                msgStoreItemMemory.put((byte) topicLength);</span>
+<span class="fc" id="L1183">                msgStoreItemMemory.put(topicData);</span>
+                // 17 PROPERTIES
+<span class="fc" id="L1185">                msgStoreItemMemory.putShort(propertiesLen);</span>
+<span class="pc bpc" id="L1186" title="1 of 2 branches missed.">                if (propertiesLen &gt; 0) {</span>
+<span class="fc" id="L1187">                    msgStoreItemMemory.put(messagesByteBuff.array(), propertiesPos, propertiesLen);</span>
+                }
+<span class="fc" id="L1189">                byte[] data = new byte[msgLen];</span>
+<span class="fc" id="L1190">                msgStoreItemMemory.clear();</span>
+<span class="fc" id="L1191">                msgStoreItemMemory.get(data);</span>
+<span class="fc" id="L1192">                batchBody.add(data);</span>
+<span class="fc" id="L1193">            }</span>
+
+<span class="fc" id="L1195">            return new EncodeResult(AppendMessageStatus.PUT_OK, key, batchBody, totalMsgLen);</span>
+        }
+
+        private void resetByteBuffer(final ByteBuffer byteBuffer, final int limit) {
+<span class="fc" id="L1199">            byteBuffer.flip();</span>
+<span class="fc" id="L1200">            byteBuffer.limit(limit);</span>
+<span class="fc" id="L1201">        }</span>
+    }
+
+    public static class DLedgerSelectMappedBufferResult extends SelectMappedBufferResult {
+
+        private SelectMmapBufferResult sbr;
+
+        public DLedgerSelectMappedBufferResult(SelectMmapBufferResult sbr) {
+<span class="fc" id="L1209">            super(sbr.getStartOffset(), sbr.getByteBuffer(), sbr.getSize(), null);</span>
+<span class="fc" id="L1210">            this.sbr = sbr;</span>
+<span class="fc" id="L1211">        }</span>
+
+        public synchronized void release() {
+<span class="fc" id="L1214">            super.release();</span>
+<span class="pc bpc" id="L1215" title="1 of 2 branches missed.">            if (sbr != null) {</span>
+<span class="fc" id="L1216">                sbr.release();</span>
+            }
+<span class="fc" id="L1218">        }</span>
+
+    }
+
+    public DLedgerServer getdLedgerServer() {
+<span class="fc" id="L1223">        return dLedgerServer;</span>
+    }
+
+    public int getId() {
+<span class="nc" id="L1227">        return id;</span>
+    }
+
+    public long getDividedCommitlogOffset() {
+<span class="fc" id="L1231">        return dividedCommitlogOffset;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.5.201910111838</span></div></body></html>

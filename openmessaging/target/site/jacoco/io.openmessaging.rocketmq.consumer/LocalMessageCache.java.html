@@ -1,0 +1,214 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>LocalMessageCache.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">rocketmq-openmessaging 4.8.0</a> &gt; <a href="index.source.html" class="el_package">io.openmessaging.rocketmq.consumer</a> &gt; <span class="el_source">LocalMessageCache.java</span></div><h1>LocalMessageCache.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package io.openmessaging.rocketmq.consumer;
+
+import io.openmessaging.KeyValue;
+import io.openmessaging.Message;
+import io.openmessaging.ServiceLifecycle;
+import io.openmessaging.rocketmq.config.ClientConfig;
+import io.openmessaging.rocketmq.domain.ConsumeRequest;
+import java.util.Collections;
+import java.util.Map;
+import java.util.TreeMap;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.ReadWriteLock;
+import org.apache.commons.lang3.reflect.FieldUtils;
+import org.apache.rocketmq.client.consumer.DefaultMQPullConsumer;
+import org.apache.rocketmq.client.exception.MQClientException;
+import org.apache.rocketmq.client.impl.consumer.ProcessQueue;
+import org.apache.rocketmq.client.log.ClientLogger;
+import org.apache.rocketmq.common.ThreadFactoryImpl;
+import org.apache.rocketmq.common.message.MessageAccessor;
+import org.apache.rocketmq.common.message.MessageExt;
+import org.apache.rocketmq.common.message.MessageQueue;
+import org.apache.rocketmq.common.utils.ThreadUtils;
+import org.apache.rocketmq.logging.InternalLogger;
+
+class LocalMessageCache implements ServiceLifecycle {
+    private final BlockingQueue&lt;ConsumeRequest&gt; consumeRequestCache;
+    private final Map&lt;String, ConsumeRequest&gt; consumedRequest;
+    private final ConcurrentHashMap&lt;MessageQueue, Long&gt; pullOffsetTable;
+    private final DefaultMQPullConsumer rocketmqPullConsumer;
+    private final ClientConfig clientConfig;
+    private final ScheduledExecutorService cleanExpireMsgExecutors;
+
+<span class="fc" id="L54">    private final static InternalLogger log = ClientLogger.getLog();</span>
+
+<span class="fc" id="L56">    LocalMessageCache(final DefaultMQPullConsumer rocketmqPullConsumer, final ClientConfig clientConfig) {</span>
+<span class="fc" id="L57">        consumeRequestCache = new LinkedBlockingQueue&lt;&gt;(clientConfig.getRmqPullMessageCacheCapacity());</span>
+<span class="fc" id="L58">        this.consumedRequest = new ConcurrentHashMap&lt;&gt;();</span>
+<span class="fc" id="L59">        this.pullOffsetTable = new ConcurrentHashMap&lt;&gt;();</span>
+<span class="fc" id="L60">        this.rocketmqPullConsumer = rocketmqPullConsumer;</span>
+<span class="fc" id="L61">        this.clientConfig = clientConfig;</span>
+<span class="fc" id="L62">        this.cleanExpireMsgExecutors = Executors.newSingleThreadScheduledExecutor(new ThreadFactoryImpl(</span>
+            &quot;OMS_CleanExpireMsgScheduledThread_&quot;));
+<span class="fc" id="L64">    }</span>
+
+    int nextPullBatchNums() {
+<span class="fc" id="L67">        return Math.min(clientConfig.getRmqPullMessageBatchNums(), consumeRequestCache.remainingCapacity());</span>
+    }
+
+    long nextPullOffset(MessageQueue remoteQueue) {
+<span class="fc bfc" id="L71" title="All 2 branches covered.">        if (!pullOffsetTable.containsKey(remoteQueue)) {</span>
+            try {
+<span class="fc" id="L73">                pullOffsetTable.putIfAbsent(remoteQueue,</span>
+<span class="fc" id="L74">                    rocketmqPullConsumer.fetchConsumeOffset(remoteQueue, false));</span>
+<span class="nc" id="L75">            } catch (MQClientException e) {</span>
+<span class="nc" id="L76">                log.error(&quot;An error occurred in fetch consume offset process.&quot;, e);</span>
+<span class="fc" id="L77">            }</span>
+        }
+<span class="fc" id="L79">        return pullOffsetTable.get(remoteQueue);</span>
+    }
+
+    void updatePullOffset(MessageQueue remoteQueue, long nextPullOffset) {
+<span class="fc" id="L83">        pullOffsetTable.put(remoteQueue, nextPullOffset);</span>
+<span class="fc" id="L84">    }</span>
+
+    void submitConsumeRequest(ConsumeRequest consumeRequest) {
+        try {
+<span class="fc" id="L88">            consumeRequestCache.put(consumeRequest);</span>
+<span class="nc" id="L89">        } catch (InterruptedException ignore) {</span>
+<span class="fc" id="L90">        }</span>
+<span class="fc" id="L91">    }</span>
+
+    MessageExt poll() {
+<span class="fc" id="L94">        return poll(clientConfig.getOperationTimeout());</span>
+    }
+
+    MessageExt poll(final KeyValue properties) {
+<span class="fc" id="L98">        int currentPollTimeout = clientConfig.getOperationTimeout();</span>
+<span class="pc bpc" id="L99" title="1 of 2 branches missed.">        if (properties.containsKey(Message.BuiltinKeys.TIMEOUT)) {</span>
+<span class="fc" id="L100">            currentPollTimeout = properties.getInt(Message.BuiltinKeys.TIMEOUT);</span>
+        }
+<span class="fc" id="L102">        return poll(currentPollTimeout);</span>
+    }
+
+    private MessageExt poll(long timeout) {
+        try {
+<span class="fc" id="L107">            ConsumeRequest consumeRequest = consumeRequestCache.poll(timeout, TimeUnit.MILLISECONDS);</span>
+<span class="fc bfc" id="L108" title="All 2 branches covered.">            if (consumeRequest != null) {</span>
+<span class="fc" id="L109">                MessageExt messageExt = consumeRequest.getMessageExt();</span>
+<span class="fc" id="L110">                consumeRequest.setStartConsumeTimeMillis(System.currentTimeMillis());</span>
+<span class="fc" id="L111">                MessageAccessor.setConsumeStartTimeStamp(messageExt, String.valueOf(consumeRequest.getStartConsumeTimeMillis()));</span>
+<span class="fc" id="L112">                consumedRequest.put(messageExt.getMsgId(), consumeRequest);</span>
+<span class="fc" id="L113">                return messageExt;</span>
+            }
+<span class="nc" id="L115">        } catch (InterruptedException ignore) {</span>
+<span class="fc" id="L116">        }</span>
+<span class="fc" id="L117">        return null;</span>
+    }
+
+    void ack(final String messageId) {
+<span class="nc" id="L121">        ConsumeRequest consumeRequest = consumedRequest.remove(messageId);</span>
+<span class="nc bnc" id="L122" title="All 2 branches missed.">        if (consumeRequest != null) {</span>
+<span class="nc" id="L123">            long offset = consumeRequest.getProcessQueue().removeMessage(Collections.singletonList(consumeRequest.getMessageExt()));</span>
+            try {
+<span class="nc" id="L125">                rocketmqPullConsumer.updateConsumeOffset(consumeRequest.getMessageQueue(), offset);</span>
+<span class="nc" id="L126">            } catch (MQClientException e) {</span>
+<span class="nc" id="L127">                log.error(&quot;An error occurred in update consume offset process.&quot;, e);</span>
+<span class="nc" id="L128">            }</span>
+        }
+<span class="nc" id="L130">    }</span>
+
+    void ack(final MessageQueue messageQueue, final ProcessQueue processQueue, final MessageExt messageExt) {
+<span class="nc" id="L133">        consumedRequest.remove(messageExt.getMsgId());</span>
+<span class="nc" id="L134">        long offset = processQueue.removeMessage(Collections.singletonList(messageExt));</span>
+        try {
+<span class="nc" id="L136">            rocketmqPullConsumer.updateConsumeOffset(messageQueue, offset);</span>
+<span class="nc" id="L137">        } catch (MQClientException e) {</span>
+<span class="nc" id="L138">            log.error(&quot;An error occurred in update consume offset process.&quot;, e);</span>
+<span class="nc" id="L139">        }</span>
+<span class="nc" id="L140">    }</span>
+
+    @Override
+    public void startup() {
+<span class="fc" id="L144">        this.cleanExpireMsgExecutors.scheduleAtFixedRate(new Runnable() {</span>
+            @Override
+            public void run() {
+<span class="nc" id="L147">                cleanExpireMsg();</span>
+<span class="nc" id="L148">            }</span>
+<span class="fc" id="L149">        }, clientConfig.getRmqMessageConsumeTimeout(), clientConfig.getRmqMessageConsumeTimeout(), TimeUnit.MINUTES);</span>
+<span class="fc" id="L150">    }</span>
+
+    @Override
+    public void shutdown() {
+<span class="nc" id="L154">        ThreadUtils.shutdownGracefully(cleanExpireMsgExecutors, 5000, TimeUnit.MILLISECONDS);</span>
+<span class="nc" id="L155">    }</span>
+
+    private void cleanExpireMsg() {
+<span class="nc bnc" id="L158" title="All 2 branches missed.">        for (final Map.Entry&lt;MessageQueue, ProcessQueue&gt; next : rocketmqPullConsumer.getDefaultMQPullConsumerImpl()</span>
+<span class="nc" id="L159">            .getRebalanceImpl().getProcessQueueTable().entrySet()) {</span>
+<span class="nc" id="L160">            ProcessQueue pq = next.getValue();</span>
+<span class="nc" id="L161">            MessageQueue mq = next.getKey();</span>
+<span class="nc" id="L162">            ReadWriteLock lockTreeMap = getLockInProcessQueue(pq);</span>
+<span class="nc bnc" id="L163" title="All 2 branches missed.">            if (lockTreeMap == null) {</span>
+<span class="nc" id="L164">                log.error(&quot;Gets tree map lock in process queue error, may be has compatibility issue&quot;);</span>
+<span class="nc" id="L165">                return;</span>
+            }
+
+<span class="nc" id="L168">            TreeMap&lt;Long, MessageExt&gt; msgTreeMap = pq.getMsgTreeMap();</span>
+
+<span class="nc" id="L170">            int loop = msgTreeMap.size();</span>
+<span class="nc bnc" id="L171" title="All 2 branches missed.">            for (int i = 0; i &lt; loop; i++) {</span>
+<span class="nc" id="L172">                MessageExt msg = null;</span>
+                try {
+<span class="nc" id="L174">                    lockTreeMap.readLock().lockInterruptibly();</span>
+                    try {
+<span class="nc bnc" id="L176" title="All 2 branches missed.">                        if (!msgTreeMap.isEmpty()) {</span>
+<span class="nc" id="L177">                            msg = msgTreeMap.firstEntry().getValue();</span>
+<span class="nc" id="L178">                            if (System.currentTimeMillis() - Long.parseLong(MessageAccessor.getConsumeStartTimeStamp(msg))</span>
+<span class="nc bnc" id="L179" title="All 2 branches missed.">                                &gt; clientConfig.getRmqMessageConsumeTimeout() * 60 * 1000) {</span>
+                                //Expired, ack and remove it.
+                            } else {
+                                break;
+                            }
+                        } else {
+                            break;
+                        }
+                    } finally {
+<span class="nc" id="L188">                        lockTreeMap.readLock().unlock();</span>
+                    }
+<span class="nc" id="L190">                } catch (InterruptedException e) {</span>
+<span class="nc" id="L191">                    log.error(&quot;Gets expired message exception&quot;, e);</span>
+<span class="nc" id="L192">                }</span>
+
+                try {
+<span class="nc" id="L195">                    rocketmqPullConsumer.sendMessageBack(msg, 3);</span>
+<span class="nc" id="L196">                    log.info(&quot;Send expired msg back. topic={}, msgId={}, storeHost={}, queueId={}, queueOffset={}&quot;,</span>
+<span class="nc" id="L197">                        msg.getTopic(), msg.getMsgId(), msg.getStoreHost(), msg.getQueueId(), msg.getQueueOffset());</span>
+<span class="nc" id="L198">                    ack(mq, pq, msg);</span>
+<span class="nc" id="L199">                } catch (Exception e) {</span>
+<span class="nc" id="L200">                    log.error(&quot;Send back expired msg exception&quot;, e);</span>
+<span class="nc" id="L201">                }</span>
+            }
+<span class="nc" id="L203">        }</span>
+<span class="nc" id="L204">    }</span>
+
+    private ReadWriteLock getLockInProcessQueue(ProcessQueue pq) {
+        try {
+<span class="nc" id="L208">            return (ReadWriteLock) FieldUtils.readDeclaredField(pq, &quot;lockTreeMap&quot;, true);</span>
+<span class="nc" id="L209">        } catch (IllegalAccessException e) {</span>
+<span class="nc" id="L210">            return null;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.5.201910111838</span></div></body></html>

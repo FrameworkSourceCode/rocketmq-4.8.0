@@ -1,0 +1,202 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>PlainAccessResource.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">rocketmq-acl 4.8.0</a> &gt; <a href="index.source.html" class="el_package">org.apache.rocketmq.acl.plain</a> &gt; <span class="el_source">PlainAccessResource.java</span></div><h1>PlainAccessResource.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.rocketmq.acl.plain;
+
+import java.util.HashMap;
+import java.util.Map;
+import org.apache.commons.lang3.builder.ToStringBuilder;
+import org.apache.rocketmq.acl.AccessResource;
+import org.apache.rocketmq.common.MixAll;
+
+public class PlainAccessResource implements AccessResource {
+
+    // Identify the user
+    private String accessKey;
+
+    private String secretKey;
+
+    private String whiteRemoteAddress;
+
+    private boolean admin;
+
+<span class="fc" id="L36">    private byte defaultTopicPerm = 1;</span>
+
+<span class="fc" id="L38">    private byte defaultGroupPerm = 1;</span>
+
+    private Map&lt;String, Byte&gt; resourcePermMap;
+
+    private RemoteAddressStrategy remoteAddressStrategy;
+
+    private int requestCode;
+
+    // The content to calculate the content
+    private byte[] content;
+
+    private String signature;
+
+    private String secretToken;
+
+    private String recognition;
+
+<span class="fc" id="L55">    public PlainAccessResource() {</span>
+<span class="fc" id="L56">    }</span>
+
+    public static boolean isRetryTopic(String topic) {
+<span class="pc bpc" id="L59" title="2 of 4 branches missed.">        return null != topic &amp;&amp; topic.startsWith(MixAll.RETRY_GROUP_TOPIC_PREFIX);</span>
+    }
+
+    public static String printStr(String resource, boolean isGroup) {
+<span class="pc bpc" id="L63" title="1 of 2 branches missed.">        if (resource == null) {</span>
+<span class="nc" id="L64">            return null;</span>
+        }
+<span class="pc bpc" id="L66" title="1 of 2 branches missed.">        if (isGroup) {</span>
+<span class="nc" id="L67">            return String.format(&quot;%s:%s&quot;, &quot;group&quot;, getGroupFromRetryTopic(resource));</span>
+        } else {
+<span class="fc" id="L69">            return String.format(&quot;%s:%s&quot;, &quot;topic&quot;, resource);</span>
+        }
+    }
+
+    public static String getGroupFromRetryTopic(String retryTopic) {
+<span class="nc bnc" id="L74" title="All 2 branches missed.">        if (retryTopic == null) {</span>
+<span class="nc" id="L75">            return null;</span>
+        }
+<span class="nc" id="L77">        return retryTopic.substring(MixAll.RETRY_GROUP_TOPIC_PREFIX.length());</span>
+    }
+
+    public static String getRetryTopic(String group) {
+<span class="pc bpc" id="L81" title="1 of 2 branches missed.">        if (group == null) {</span>
+<span class="nc" id="L82">            return null;</span>
+        }
+<span class="fc" id="L84">        return MixAll.getRetryTopic(group);</span>
+    }
+
+    public void addResourceAndPerm(String resource, byte perm) {
+<span class="fc bfc" id="L88" title="All 2 branches covered.">        if (resource == null) {</span>
+<span class="fc" id="L89">            return;</span>
+        }
+<span class="fc bfc" id="L91" title="All 2 branches covered.">        if (resourcePermMap == null) {</span>
+<span class="fc" id="L92">            resourcePermMap = new HashMap&lt;&gt;();</span>
+        }
+<span class="fc" id="L94">        resourcePermMap.put(resource, perm);</span>
+<span class="fc" id="L95">    }</span>
+
+    public String getAccessKey() {
+<span class="fc" id="L98">        return accessKey;</span>
+    }
+
+    public void setAccessKey(String accessKey) {
+<span class="fc" id="L102">        this.accessKey = accessKey;</span>
+<span class="fc" id="L103">    }</span>
+
+    public String getSecretKey() {
+<span class="fc" id="L106">        return secretKey;</span>
+    }
+
+    public void setSecretKey(String secretKey) {
+<span class="fc" id="L110">        this.secretKey = secretKey;</span>
+<span class="fc" id="L111">    }</span>
+
+    public String getWhiteRemoteAddress() {
+<span class="fc" id="L114">        return whiteRemoteAddress;</span>
+    }
+
+    public void setWhiteRemoteAddress(String whiteRemoteAddress) {
+<span class="fc" id="L118">        this.whiteRemoteAddress = whiteRemoteAddress;</span>
+<span class="fc" id="L119">    }</span>
+
+    public boolean isAdmin() {
+<span class="fc" id="L122">        return admin;</span>
+    }
+
+    public void setAdmin(boolean admin) {
+<span class="fc" id="L126">        this.admin = admin;</span>
+<span class="fc" id="L127">    }</span>
+
+    public byte getDefaultTopicPerm() {
+<span class="fc" id="L130">        return defaultTopicPerm;</span>
+    }
+
+    public void setDefaultTopicPerm(byte defaultTopicPerm) {
+<span class="fc" id="L134">        this.defaultTopicPerm = defaultTopicPerm;</span>
+<span class="fc" id="L135">    }</span>
+
+    public byte getDefaultGroupPerm() {
+<span class="nc" id="L138">        return defaultGroupPerm;</span>
+    }
+
+    public void setDefaultGroupPerm(byte defaultGroupPerm) {
+<span class="fc" id="L142">        this.defaultGroupPerm = defaultGroupPerm;</span>
+<span class="fc" id="L143">    }</span>
+
+    public Map&lt;String, Byte&gt; getResourcePermMap() {
+<span class="fc" id="L146">        return resourcePermMap;</span>
+    }
+
+    public String getRecognition() {
+<span class="nc" id="L150">        return recognition;</span>
+    }
+
+    public void setRecognition(String recognition) {
+<span class="nc" id="L154">        this.recognition = recognition;</span>
+<span class="nc" id="L155">    }</span>
+
+    public int getRequestCode() {
+<span class="fc" id="L158">        return requestCode;</span>
+    }
+
+    public void setRequestCode(int requestCode) {
+<span class="fc" id="L162">        this.requestCode = requestCode;</span>
+<span class="fc" id="L163">    }</span>
+
+    public String getSecretToken() {
+<span class="nc" id="L166">        return secretToken;</span>
+    }
+
+    public void setSecretToken(String secretToken) {
+<span class="fc" id="L170">        this.secretToken = secretToken;</span>
+<span class="fc" id="L171">    }</span>
+
+    public RemoteAddressStrategy getRemoteAddressStrategy() {
+<span class="fc" id="L174">        return remoteAddressStrategy;</span>
+    }
+
+    public void setRemoteAddressStrategy(RemoteAddressStrategy remoteAddressStrategy) {
+<span class="fc" id="L178">        this.remoteAddressStrategy = remoteAddressStrategy;</span>
+<span class="fc" id="L179">    }</span>
+
+    public String getSignature() {
+<span class="fc" id="L182">        return signature;</span>
+    }
+
+    public void setSignature(String signature) {
+<span class="fc" id="L186">        this.signature = signature;</span>
+<span class="fc" id="L187">    }</span>
+
+    @Override
+    public String toString() {
+<span class="nc" id="L191">        return ToStringBuilder.reflectionToString(this);</span>
+    }
+
+    public byte[] getContent() {
+<span class="fc" id="L195">        return content;</span>
+    }
+
+    public void setContent(byte[] content) {
+<span class="fc" id="L199">        this.content = content;</span>
+<span class="fc" id="L200">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.5.201910111838</span></div></body></html>

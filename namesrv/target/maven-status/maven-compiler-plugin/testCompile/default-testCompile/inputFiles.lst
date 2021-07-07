@@ -1,0 +1,7 @@
+/Users/yangweixing/Desktop/github_open/rocketmq-all-4.8.0-source-release/namesrv/src/test/java/org/apache/rocketmq/namesrv/processor/DefaultRequestProcessorTest.java
+/Users/yangweixing/Desktop/github_open/rocketmq-all-4.8.0-source-release/namesrv/src/test/java/org/apache/rocketmq/namesrv/NameServerInstanceTest.java
+/Users/yangweixing/Desktop/github_open/rocketmq-all-4.8.0-source-release/namesrv/src/test/java/org/apache/rocketmq/namesrv/routeinfo/BrokerHousekeepingServiceTest.java
+/Users/yangweixing/Desktop/github_open/rocketmq-all-4.8.0-source-release/namesrv/src/test/java/org/apache/rocketmq/namesrv/kvconfig/KVConfigManagerTest.java
+/Users/yangweixing/Desktop/github_open/rocketmq-all-4.8.0-source-release/namesrv/src/test/java/org/apache/rocketmq/namesrv/processor/ClusterTestRequestProcessorTest.java
+/Users/yangweixing/Desktop/github_open/rocketmq-all-4.8.0-source-release/namesrv/src/test/java/org/apache/rocketmq/namesrv/kvconfig/KVConfigSerializeWrapperTest.java
+/Users/yangweixing/Desktop/github_open/rocketmq-all-4.8.0-source-release/namesrv/src/test/java/org/apache/rocketmq/namesrv/routeinfo/RouteInfoManagerTest.java

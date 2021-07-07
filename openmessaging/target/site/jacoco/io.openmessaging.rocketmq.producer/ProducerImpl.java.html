@@ -1,0 +1,146 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ProducerImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">rocketmq-openmessaging 4.8.0</a> &gt; <a href="index.source.html" class="el_package">io.openmessaging.rocketmq.producer</a> &gt; <span class="el_source">ProducerImpl.java</span></div><h1>ProducerImpl.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package io.openmessaging.rocketmq.producer;
+
+import io.openmessaging.BytesMessage;
+import io.openmessaging.KeyValue;
+import io.openmessaging.Message;
+import io.openmessaging.Promise;
+import io.openmessaging.exception.OMSRuntimeException;
+import io.openmessaging.interceptor.ProducerInterceptor;
+import io.openmessaging.producer.BatchMessageSender;
+import io.openmessaging.producer.LocalTransactionExecutor;
+import io.openmessaging.producer.Producer;
+import io.openmessaging.producer.SendResult;
+import io.openmessaging.rocketmq.promise.DefaultPromise;
+import io.openmessaging.rocketmq.utils.OMSUtil;
+import org.apache.rocketmq.client.producer.SendCallback;
+import org.apache.rocketmq.client.producer.SendStatus;
+
+import static io.openmessaging.rocketmq.utils.OMSUtil.msgConvert;
+
+public class ProducerImpl extends AbstractOMSProducer implements Producer {
+
+    public ProducerImpl(final KeyValue properties) {
+<span class="fc" id="L39">        super(properties);</span>
+<span class="fc" id="L40">    }</span>
+
+    @Override
+    public KeyValue attributes() {
+<span class="nc" id="L44">        return properties;</span>
+    }
+
+    @Override
+    public SendResult send(final Message message) {
+<span class="fc" id="L49">        return send(message, this.rocketmqProducer.getSendMsgTimeout());</span>
+    }
+
+    @Override
+    public SendResult send(final Message message, final KeyValue properties) {
+<span class="nc bnc" id="L54" title="All 2 branches missed.">        long timeout = properties.containsKey(Message.BuiltinKeys.TIMEOUT)</span>
+<span class="nc" id="L55">            ? properties.getInt(Message.BuiltinKeys.TIMEOUT) : this.rocketmqProducer.getSendMsgTimeout();</span>
+<span class="nc" id="L56">        return send(message, timeout);</span>
+    }
+
+    @Override
+    public SendResult send(Message message, LocalTransactionExecutor branchExecutor, KeyValue attributes) {
+<span class="nc" id="L61">        return null;</span>
+    }
+
+    private SendResult send(final Message message, long timeout) {
+<span class="fc" id="L65">        checkMessageType(message);</span>
+<span class="fc" id="L66">        org.apache.rocketmq.common.message.Message rmqMessage = msgConvert((BytesMessage) message);</span>
+        try {
+<span class="fc" id="L68">            org.apache.rocketmq.client.producer.SendResult rmqResult = this.rocketmqProducer.send(rmqMessage, timeout);</span>
+<span class="fc bfc" id="L69" title="All 2 branches covered.">            if (!rmqResult.getSendStatus().equals(SendStatus.SEND_OK)) {</span>
+<span class="fc" id="L70">                log.error(String.format(&quot;Send message to RocketMQ failed, %s&quot;, message));</span>
+<span class="fc" id="L71">                throw new OMSRuntimeException(&quot;-1&quot;, &quot;Send message to RocketMQ broker failed.&quot;);</span>
+            }
+<span class="fc" id="L73">            message.sysHeaders().put(Message.BuiltinKeys.MESSAGE_ID, rmqResult.getMsgId());</span>
+<span class="fc" id="L74">            return OMSUtil.sendResultConvert(rmqResult);</span>
+<span class="fc" id="L75">        } catch (Exception e) {</span>
+<span class="fc" id="L76">            log.error(String.format(&quot;Send message to RocketMQ failed, %s&quot;, message), e);</span>
+<span class="fc" id="L77">            throw checkProducerException(rmqMessage.getTopic(), message.sysHeaders().getString(Message.BuiltinKeys.MESSAGE_ID), e);</span>
+        }
+    }
+
+    @Override
+    public Promise&lt;SendResult&gt; sendAsync(final Message message) {
+<span class="nc" id="L83">        return sendAsync(message, this.rocketmqProducer.getSendMsgTimeout());</span>
+    }
+
+    @Override
+    public Promise&lt;SendResult&gt; sendAsync(final Message message, final KeyValue properties) {
+<span class="nc bnc" id="L88" title="All 2 branches missed.">        long timeout = properties.containsKey(Message.BuiltinKeys.TIMEOUT)</span>
+<span class="nc" id="L89">            ? properties.getInt(Message.BuiltinKeys.TIMEOUT) : this.rocketmqProducer.getSendMsgTimeout();</span>
+<span class="nc" id="L90">        return sendAsync(message, timeout);</span>
+    }
+
+    private Promise&lt;SendResult&gt; sendAsync(final Message message, long timeout) {
+<span class="nc" id="L94">        checkMessageType(message);</span>
+<span class="nc" id="L95">        org.apache.rocketmq.common.message.Message rmqMessage = msgConvert((BytesMessage) message);</span>
+<span class="nc" id="L96">        final Promise&lt;SendResult&gt; promise = new DefaultPromise&lt;&gt;();</span>
+        try {
+<span class="nc" id="L98">            this.rocketmqProducer.send(rmqMessage, new SendCallback() {</span>
+                @Override
+                public void onSuccess(final org.apache.rocketmq.client.producer.SendResult rmqResult) {
+<span class="nc" id="L101">                    message.sysHeaders().put(Message.BuiltinKeys.MESSAGE_ID, rmqResult.getMsgId());</span>
+<span class="nc" id="L102">                    promise.set(OMSUtil.sendResultConvert(rmqResult));</span>
+<span class="nc" id="L103">                }</span>
+
+                @Override
+                public void onException(final Throwable e) {
+<span class="nc" id="L107">                    promise.setFailure(e);</span>
+<span class="nc" id="L108">                }</span>
+            }, timeout);
+<span class="nc" id="L110">        } catch (Exception e) {</span>
+<span class="nc" id="L111">            promise.setFailure(e);</span>
+<span class="nc" id="L112">        }</span>
+<span class="nc" id="L113">        return promise;</span>
+    }
+
+    @Override
+    public void sendOneway(final Message message) {
+<span class="nc" id="L118">        checkMessageType(message);</span>
+<span class="nc" id="L119">        org.apache.rocketmq.common.message.Message rmqMessage = msgConvert((BytesMessage) message);</span>
+        try {
+<span class="nc" id="L121">            this.rocketmqProducer.sendOneway(rmqMessage);</span>
+<span class="nc" id="L122">        } catch (Exception ignore) { //Ignore the oneway exception.</span>
+<span class="nc" id="L123">        }</span>
+<span class="nc" id="L124">    }</span>
+
+    @Override
+    public void sendOneway(final Message message, final KeyValue properties) {
+<span class="nc" id="L128">        sendOneway(message);</span>
+<span class="nc" id="L129">    }</span>
+
+    @Override
+    public BatchMessageSender createBatchMessageSender() {
+<span class="nc" id="L133">        return null;</span>
+    }
+
+    @Override
+    public void addInterceptor(ProducerInterceptor interceptor) {
+
+<span class="nc" id="L139">    }</span>
+
+    @Override
+    public void removeInterceptor(ProducerInterceptor interceptor) {
+
+<span class="nc" id="L144">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.5.201910111838</span></div></body></html>

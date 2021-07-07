@@ -1,0 +1,494 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DefaultLitePullConsumer.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">rocketmq-client 4.8.0</a> &gt; <a href="index.source.html" class="el_package">org.apache.rocketmq.client.consumer</a> &gt; <span class="el_source">DefaultLitePullConsumer.java</span></div><h1>DefaultLitePullConsumer.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.rocketmq.client.consumer;
+
+import java.util.Collection;
+import java.util.List;
+import org.apache.rocketmq.client.ClientConfig;
+import org.apache.rocketmq.client.consumer.rebalance.AllocateMessageQueueAveragely;
+import org.apache.rocketmq.client.consumer.store.OffsetStore;
+import org.apache.rocketmq.client.exception.MQClientException;
+import org.apache.rocketmq.client.impl.consumer.DefaultLitePullConsumerImpl;
+import org.apache.rocketmq.common.MixAll;
+import org.apache.rocketmq.common.UtilAll;
+import org.apache.rocketmq.common.consumer.ConsumeFromWhere;
+import org.apache.rocketmq.common.message.MessageExt;
+import org.apache.rocketmq.common.message.MessageQueue;
+import org.apache.rocketmq.common.protocol.NamespaceUtil;
+import org.apache.rocketmq.common.protocol.heartbeat.MessageModel;
+import org.apache.rocketmq.remoting.RPCHook;
+
+public class DefaultLitePullConsumer extends ClientConfig implements LitePullConsumer {
+
+    private final DefaultLitePullConsumerImpl defaultLitePullConsumerImpl;
+
+    /**
+     * Consumers belonging to the same consumer group share a group id. The consumers in a group then divides the topic
+     * as fairly amongst themselves as possible by establishing that each queue is only consumed by a single consumer
+     * from the group. If all consumers are from the same group, it functions as a traditional message queue. Each
+     * message would be consumed by one consumer of the group only. When multiple consumer groups exist, the flow of the
+     * data consumption model aligns with the traditional publish-subscribe model. The messages are broadcast to all
+     * consumer groups.
+     */
+    private String consumerGroup;
+
+    /**
+     * Long polling mode, the Consumer connection max suspend time, it is not recommended to modify
+     */
+<span class="fc" id="L52">    private long brokerSuspendMaxTimeMillis = 1000 * 20;</span>
+
+    /**
+     * Long polling mode, the Consumer connection timeout(must greater than brokerSuspendMaxTimeMillis), it is not
+     * recommended to modify
+     */
+<span class="fc" id="L58">    private long consumerTimeoutMillisWhenSuspend = 1000 * 30;</span>
+
+    /**
+     * The socket timeout in milliseconds
+     */
+<span class="fc" id="L63">    private long consumerPullTimeoutMillis = 1000 * 10;</span>
+
+    /**
+     * Consumption pattern,default is clustering
+     */
+<span class="fc" id="L68">    private MessageModel messageModel = MessageModel.CLUSTERING;</span>
+    /**
+     * Message queue listener
+     */
+    private MessageQueueListener messageQueueListener;
+    /**
+     * Offset Storage
+     */
+    private OffsetStore offsetStore;
+
+    /**
+     * Queue allocation algorithm
+     */
+<span class="fc" id="L81">    private AllocateMessageQueueStrategy allocateMessageQueueStrategy = new AllocateMessageQueueAveragely();</span>
+    /**
+     * Whether the unit of subscription group
+     */
+<span class="fc" id="L85">    private boolean unitMode = false;</span>
+
+    /**
+     * The flag for auto commit offset
+     */
+<span class="fc" id="L90">    private boolean autoCommit = true;</span>
+
+    /**
+     * Pull thread number
+     */
+<span class="fc" id="L95">    private int pullThreadNums = 20;</span>
+
+    /**
+     * Minimum commit offset interval time in milliseconds.
+     */
+    private static final long MIN_AUTOCOMMIT_INTERVAL_MILLIS = 1000;
+
+    /**
+     * Maximum commit offset interval time in milliseconds.
+     */
+<span class="fc" id="L105">    private long autoCommitIntervalMillis = 5 * 1000;</span>
+
+    /**
+     * Maximum number of messages pulled each time.
+     */
+<span class="fc" id="L110">    private int pullBatchSize = 10;</span>
+
+    /**
+     * Flow control threshold for consume request, each consumer will cache at most 10000 consume requests by default.
+     * Consider the {@code pullBatchSize}, the instantaneous value may exceed the limit
+     */
+<span class="fc" id="L116">    private long pullThresholdForAll = 10000;</span>
+
+    /**
+     * Consume max span offset.
+     */
+<span class="fc" id="L121">    private int consumeMaxSpan = 2000;</span>
+
+    /**
+     * Flow control threshold on queue level, each message queue will cache at most 1000 messages by default, Consider
+     * the {@code pullBatchSize}, the instantaneous value may exceed the limit
+     */
+<span class="fc" id="L127">    private int pullThresholdForQueue = 1000;</span>
+
+    /**
+     * Limit the cached message size on queue level, each message queue will cache at most 100 MiB messages by default,
+     * Consider the {@code pullBatchSize}, the instantaneous value may exceed the limit
+     *
+     * &lt;p&gt;
+     * The size of a message only measured by message body, so it's not accurate
+     */
+<span class="fc" id="L136">    private int pullThresholdSizeForQueue = 100;</span>
+
+    /**
+     * The poll timeout in milliseconds
+     */
+<span class="fc" id="L141">    private long pollTimeoutMillis = 1000 * 5;</span>
+
+    /**
+     * Interval time in in milliseconds for checking changes in topic metadata.
+     */
+<span class="fc" id="L146">    private long topicMetadataCheckIntervalMillis = 30 * 1000;</span>
+
+<span class="fc" id="L148">    private ConsumeFromWhere consumeFromWhere = ConsumeFromWhere.CONSUME_FROM_LAST_OFFSET;</span>
+
+    /**
+     * Backtracking consumption time with second precision. Time format is 20131223171201&lt;br&gt; Implying Seventeen twelve
+     * and 01 seconds on December 23, 2013 year&lt;br&gt; Default backtracking consumption time Half an hour ago.
+     */
+<span class="fc" id="L154">    private String consumeTimestamp = UtilAll.timeMillisToHumanString3(System.currentTimeMillis() - (1000 * 60 * 30));</span>
+
+    /**
+     * Default constructor.
+     */
+    public DefaultLitePullConsumer() {
+<span class="nc" id="L160">        this(null, MixAll.DEFAULT_CONSUMER_GROUP, null);</span>
+<span class="nc" id="L161">    }</span>
+
+    /**
+     * Constructor specifying consumer group.
+     *
+     * @param consumerGroup Consumer group.
+     */
+    public DefaultLitePullConsumer(final String consumerGroup) {
+<span class="fc" id="L169">        this(null, consumerGroup, null);</span>
+<span class="fc" id="L170">    }</span>
+
+    /**
+     * Constructor specifying RPC hook.
+     *
+     * @param rpcHook RPC hook to execute before each remoting command.
+     */
+    public DefaultLitePullConsumer(RPCHook rpcHook) {
+<span class="nc" id="L178">        this(null, MixAll.DEFAULT_CONSUMER_GROUP, rpcHook);</span>
+<span class="nc" id="L179">    }</span>
+
+    /**
+     * Constructor specifying consumer group, RPC hook
+     *
+     * @param consumerGroup Consumer group.
+     * @param rpcHook RPC hook to execute before each remoting command.
+     */
+    public DefaultLitePullConsumer(final String consumerGroup, RPCHook rpcHook) {
+<span class="nc" id="L188">        this(null, consumerGroup, rpcHook);</span>
+<span class="nc" id="L189">    }</span>
+
+    /**
+     * Constructor specifying namespace, consumer group and RPC hook.
+     *
+     * @param consumerGroup Consumer group.
+     * @param rpcHook RPC hook to execute before each remoting command.
+     */
+<span class="fc" id="L197">    public DefaultLitePullConsumer(final String namespace, final String consumerGroup, RPCHook rpcHook) {</span>
+<span class="fc" id="L198">        this.namespace = namespace;</span>
+<span class="fc" id="L199">        this.consumerGroup = consumerGroup;</span>
+<span class="fc" id="L200">        defaultLitePullConsumerImpl = new DefaultLitePullConsumerImpl(this, rpcHook);</span>
+<span class="fc" id="L201">    }</span>
+
+    @Override
+    public void start() throws MQClientException {
+<span class="fc" id="L205">        setConsumerGroup(NamespaceUtil.wrapNamespace(this.getNamespace(), this.consumerGroup));</span>
+<span class="fc" id="L206">        this.defaultLitePullConsumerImpl.start();</span>
+<span class="fc" id="L207">    }</span>
+
+    @Override
+    public void shutdown() {
+<span class="fc" id="L211">        this.defaultLitePullConsumerImpl.shutdown();</span>
+<span class="fc" id="L212">    }</span>
+
+    @Override
+    public boolean isRunning() {
+<span class="fc" id="L216">        return this.defaultLitePullConsumerImpl.isRunning();</span>
+    }
+
+    @Override
+    public void subscribe(String topic, String subExpression) throws MQClientException {
+<span class="fc" id="L221">        this.defaultLitePullConsumerImpl.subscribe(withNamespace(topic), subExpression);</span>
+<span class="fc" id="L222">    }</span>
+
+    @Override
+    public void subscribe(String topic, MessageSelector messageSelector) throws MQClientException {
+<span class="nc" id="L226">        this.defaultLitePullConsumerImpl.subscribe(withNamespace(topic), messageSelector);</span>
+<span class="nc" id="L227">    }</span>
+
+    @Override
+    public void unsubscribe(String topic) {
+<span class="nc" id="L231">        this.defaultLitePullConsumerImpl.unsubscribe(withNamespace(topic));</span>
+<span class="nc" id="L232">    }</span>
+
+    @Override
+    public void assign(Collection&lt;MessageQueue&gt; messageQueues) {
+<span class="fc" id="L236">        defaultLitePullConsumerImpl.assign(queuesWithNamespace(messageQueues));</span>
+<span class="fc" id="L237">    }</span>
+
+    @Override
+    public List&lt;MessageExt&gt; poll() {
+<span class="fc" id="L241">        return defaultLitePullConsumerImpl.poll(this.getPollTimeoutMillis());</span>
+    }
+
+    @Override
+    public List&lt;MessageExt&gt; poll(long timeout) {
+<span class="fc" id="L246">        return defaultLitePullConsumerImpl.poll(timeout);</span>
+    }
+
+    @Override
+    public void seek(MessageQueue messageQueue, long offset) throws MQClientException {
+<span class="fc" id="L251">        this.defaultLitePullConsumerImpl.seek(queueWithNamespace(messageQueue), offset);</span>
+<span class="fc" id="L252">    }</span>
+
+    @Override
+    public void pause(Collection&lt;MessageQueue&gt; messageQueues) {
+<span class="fc" id="L256">        this.defaultLitePullConsumerImpl.pause(queuesWithNamespace(messageQueues));</span>
+<span class="fc" id="L257">    }</span>
+
+    @Override
+    public void resume(Collection&lt;MessageQueue&gt; messageQueues) {
+<span class="fc" id="L261">        this.defaultLitePullConsumerImpl.resume(queuesWithNamespace(messageQueues));</span>
+<span class="fc" id="L262">    }</span>
+
+    @Override
+    public Collection&lt;MessageQueue&gt; fetchMessageQueues(String topic) throws MQClientException {
+<span class="nc" id="L266">        return this.defaultLitePullConsumerImpl.fetchMessageQueues(withNamespace(topic));</span>
+    }
+
+    @Override
+    public Long offsetForTimestamp(MessageQueue messageQueue, Long timestamp) throws MQClientException {
+<span class="fc" id="L271">        return this.defaultLitePullConsumerImpl.searchOffset(queueWithNamespace(messageQueue), timestamp);</span>
+    }
+
+    @Override
+    public void registerTopicMessageQueueChangeListener(String topic,
+        TopicMessageQueueChangeListener topicMessageQueueChangeListener) throws MQClientException {
+<span class="fc" id="L277">        this.defaultLitePullConsumerImpl.registerTopicMessageQueueChangeListener(withNamespace(topic), topicMessageQueueChangeListener);</span>
+<span class="fc" id="L278">    }</span>
+
+    @Override
+    public void commitSync() {
+<span class="nc" id="L282">        this.defaultLitePullConsumerImpl.commitAll();</span>
+<span class="nc" id="L283">    }</span>
+
+    @Override
+    public Long committed(MessageQueue messageQueue) throws MQClientException {
+<span class="fc" id="L287">        return this.defaultLitePullConsumerImpl.committed(queueWithNamespace(messageQueue));</span>
+    }
+
+    @Override
+    public void updateNameServerAddress(String nameServerAddress) {
+<span class="nc" id="L292">        this.defaultLitePullConsumerImpl.updateNameServerAddr(nameServerAddress);</span>
+<span class="nc" id="L293">    }</span>
+
+    @Override
+    public void seekToBegin(MessageQueue messageQueue) throws MQClientException {
+<span class="fc" id="L297">        this.defaultLitePullConsumerImpl.seekToBegin(queueWithNamespace(messageQueue));</span>
+<span class="fc" id="L298">    }</span>
+
+    @Override
+    public void seekToEnd(MessageQueue messageQueue) throws MQClientException {
+<span class="fc" id="L302">        this.defaultLitePullConsumerImpl.seekToEnd(queueWithNamespace(messageQueue));</span>
+<span class="fc" id="L303">    }</span>
+
+    @Override
+    public boolean isAutoCommit() {
+<span class="fc" id="L307">        return autoCommit;</span>
+    }
+
+    @Override
+    public void setAutoCommit(boolean autoCommit) {
+<span class="nc" id="L312">        this.autoCommit = autoCommit;</span>
+<span class="nc" id="L313">    }</span>
+
+    public boolean isConnectBrokerByUser() {
+<span class="nc" id="L316">        return this.defaultLitePullConsumerImpl.getPullAPIWrapper().isConnectBrokerByUser();</span>
+    }
+
+    public void setConnectBrokerByUser(boolean connectBrokerByUser) {
+<span class="nc" id="L320">        this.defaultLitePullConsumerImpl.getPullAPIWrapper().setConnectBrokerByUser(connectBrokerByUser);</span>
+<span class="nc" id="L321">    }</span>
+
+    public long getDefaultBrokerId() {
+<span class="nc" id="L324">        return this.defaultLitePullConsumerImpl.getPullAPIWrapper().getDefaultBrokerId();</span>
+    }
+
+    public void setDefaultBrokerId(long defaultBrokerId) {
+<span class="nc" id="L328">        this.defaultLitePullConsumerImpl.getPullAPIWrapper().setDefaultBrokerId(defaultBrokerId);</span>
+<span class="nc" id="L329">    }</span>
+
+    public int getPullThreadNums() {
+<span class="fc" id="L332">        return pullThreadNums;</span>
+    }
+
+    public void setPullThreadNums(int pullThreadNums) {
+<span class="nc" id="L336">        this.pullThreadNums = pullThreadNums;</span>
+<span class="nc" id="L337">    }</span>
+
+    public long getAutoCommitIntervalMillis() {
+<span class="fc" id="L340">        return autoCommitIntervalMillis;</span>
+    }
+
+    public void setAutoCommitIntervalMillis(long autoCommitIntervalMillis) {
+<span class="nc bnc" id="L344" title="All 2 branches missed.">        if (autoCommitIntervalMillis &gt;= MIN_AUTOCOMMIT_INTERVAL_MILLIS) {</span>
+<span class="nc" id="L345">            this.autoCommitIntervalMillis = autoCommitIntervalMillis;</span>
+        }
+<span class="nc" id="L347">    }</span>
+
+    public int getPullBatchSize() {
+<span class="fc" id="L350">        return pullBatchSize;</span>
+    }
+
+    public void setPullBatchSize(int pullBatchSize) {
+<span class="nc" id="L354">        this.pullBatchSize = pullBatchSize;</span>
+<span class="nc" id="L355">    }</span>
+
+    public long getPullThresholdForAll() {
+<span class="fc" id="L358">        return pullThresholdForAll;</span>
+    }
+
+    public void setPullThresholdForAll(long pullThresholdForAll) {
+<span class="fc" id="L362">        this.pullThresholdForAll = pullThresholdForAll;</span>
+<span class="fc" id="L363">    }</span>
+
+    public int getConsumeMaxSpan() {
+<span class="fc" id="L366">        return consumeMaxSpan;</span>
+    }
+
+    public void setConsumeMaxSpan(int consumeMaxSpan) {
+<span class="fc" id="L370">        this.consumeMaxSpan = consumeMaxSpan;</span>
+<span class="fc" id="L371">    }</span>
+
+    public int getPullThresholdForQueue() {
+<span class="fc" id="L374">        return pullThresholdForQueue;</span>
+    }
+
+    public void setPullThresholdForQueue(int pullThresholdForQueue) {
+<span class="fc" id="L378">        this.pullThresholdForQueue = pullThresholdForQueue;</span>
+<span class="fc" id="L379">    }</span>
+
+    public int getPullThresholdSizeForQueue() {
+<span class="fc" id="L382">        return pullThresholdSizeForQueue;</span>
+    }
+
+    public void setPullThresholdSizeForQueue(int pullThresholdSizeForQueue) {
+<span class="fc" id="L386">        this.pullThresholdSizeForQueue = pullThresholdSizeForQueue;</span>
+<span class="fc" id="L387">    }</span>
+
+    public AllocateMessageQueueStrategy getAllocateMessageQueueStrategy() {
+<span class="fc" id="L390">        return allocateMessageQueueStrategy;</span>
+    }
+
+    public void setAllocateMessageQueueStrategy(AllocateMessageQueueStrategy allocateMessageQueueStrategy) {
+<span class="fc" id="L394">        this.allocateMessageQueueStrategy = allocateMessageQueueStrategy;</span>
+<span class="fc" id="L395">    }</span>
+
+    public long getBrokerSuspendMaxTimeMillis() {
+<span class="fc" id="L398">        return brokerSuspendMaxTimeMillis;</span>
+    }
+
+    public long getPollTimeoutMillis() {
+<span class="fc" id="L402">        return pollTimeoutMillis;</span>
+    }
+
+    public void setPollTimeoutMillis(long pollTimeoutMillis) {
+<span class="fc" id="L406">        this.pollTimeoutMillis = pollTimeoutMillis;</span>
+<span class="fc" id="L407">    }</span>
+
+    public OffsetStore getOffsetStore() {
+<span class="fc" id="L410">        return offsetStore;</span>
+    }
+
+    public void setOffsetStore(OffsetStore offsetStore) {
+<span class="fc" id="L414">        this.offsetStore = offsetStore;</span>
+<span class="fc" id="L415">    }</span>
+
+    public boolean isUnitMode() {
+<span class="fc" id="L418">        return unitMode;</span>
+    }
+
+    public void setUnitMode(boolean isUnitMode) {
+<span class="nc" id="L422">        this.unitMode = isUnitMode;</span>
+<span class="nc" id="L423">    }</span>
+
+    public MessageModel getMessageModel() {
+<span class="fc" id="L426">        return messageModel;</span>
+    }
+
+    public void setMessageModel(MessageModel messageModel) {
+<span class="fc" id="L430">        this.messageModel = messageModel;</span>
+<span class="fc" id="L431">    }</span>
+
+    public String getConsumerGroup() {
+<span class="fc" id="L434">        return consumerGroup;</span>
+    }
+
+    public MessageQueueListener getMessageQueueListener() {
+<span class="fc" id="L438">        return messageQueueListener;</span>
+    }
+
+    public void setMessageQueueListener(MessageQueueListener messageQueueListener) {
+<span class="fc" id="L442">        this.messageQueueListener = messageQueueListener;</span>
+<span class="fc" id="L443">    }</span>
+
+    public long getConsumerPullTimeoutMillis() {
+<span class="fc" id="L446">        return consumerPullTimeoutMillis;</span>
+    }
+
+    public void setConsumerPullTimeoutMillis(long consumerPullTimeoutMillis) {
+<span class="nc" id="L450">        this.consumerPullTimeoutMillis = consumerPullTimeoutMillis;</span>
+<span class="nc" id="L451">    }</span>
+
+    public long getConsumerTimeoutMillisWhenSuspend() {
+<span class="fc" id="L454">        return consumerTimeoutMillisWhenSuspend;</span>
+    }
+
+    public void setConsumerTimeoutMillisWhenSuspend(long consumerTimeoutMillisWhenSuspend) {
+<span class="fc" id="L458">        this.consumerTimeoutMillisWhenSuspend = consumerTimeoutMillisWhenSuspend;</span>
+<span class="fc" id="L459">    }</span>
+
+    public long getTopicMetadataCheckIntervalMillis() {
+<span class="fc" id="L462">        return topicMetadataCheckIntervalMillis;</span>
+    }
+
+    public void setTopicMetadataCheckIntervalMillis(long topicMetadataCheckIntervalMillis) {
+<span class="fc" id="L466">        this.topicMetadataCheckIntervalMillis = topicMetadataCheckIntervalMillis;</span>
+<span class="fc" id="L467">    }</span>
+
+    public void setConsumerGroup(String consumerGroup) {
+<span class="fc" id="L470">        this.consumerGroup = consumerGroup;</span>
+<span class="fc" id="L471">    }</span>
+
+    public ConsumeFromWhere getConsumeFromWhere() {
+<span class="fc" id="L474">        return consumeFromWhere;</span>
+    }
+
+    public void setConsumeFromWhere(ConsumeFromWhere consumeFromWhere) {
+<span class="pc bpc" id="L478" title="1 of 6 branches missed.">        if (consumeFromWhere != ConsumeFromWhere.CONSUME_FROM_FIRST_OFFSET</span>
+            &amp;&amp; consumeFromWhere != ConsumeFromWhere.CONSUME_FROM_LAST_OFFSET
+            &amp;&amp; consumeFromWhere != ConsumeFromWhere.CONSUME_FROM_TIMESTAMP) {
+<span class="nc" id="L481">            throw new RuntimeException(&quot;Invalid ConsumeFromWhere Value&quot;, null);</span>
+        }
+<span class="fc" id="L483">        this.consumeFromWhere = consumeFromWhere;</span>
+<span class="fc" id="L484">    }</span>
+
+    public String getConsumeTimestamp() {
+<span class="fc" id="L487">        return consumeTimestamp;</span>
+    }
+
+    public void setConsumeTimestamp(String consumeTimestamp) {
+<span class="fc" id="L491">        this.consumeTimestamp = consumeTimestamp;</span>
+<span class="fc" id="L492">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.5.201910111838</span></div></body></html>

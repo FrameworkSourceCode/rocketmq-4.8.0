@@ -1,0 +1,8 @@
+/Users/yangweixing/Desktop/github_open/rocketmq-all-4.8.0-source-release/remoting/src/test/java/org/apache/rocketmq/remoting/netty/NettyRemotingClientTest.java
+/Users/yangweixing/Desktop/github_open/rocketmq-all-4.8.0-source-release/remoting/src/test/java/org/apache/rocketmq/remoting/netty/NettyRemotingAbstractTest.java
+/Users/yangweixing/Desktop/github_open/rocketmq-all-4.8.0-source-release/remoting/src/test/java/org/apache/rocketmq/remoting/netty/FileRegionEncoderTest.java
+/Users/yangweixing/Desktop/github_open/rocketmq-all-4.8.0-source-release/remoting/src/test/java/org/apache/rocketmq/remoting/protocol/RemotingCommandTest.java
+/Users/yangweixing/Desktop/github_open/rocketmq-all-4.8.0-source-release/remoting/src/test/java/org/apache/rocketmq/remoting/RemotingServerTest.java
+/Users/yangweixing/Desktop/github_open/rocketmq-all-4.8.0-source-release/remoting/src/test/java/org/apache/rocketmq/remoting/protocol/RocketMQSerializableTest.java
+/Users/yangweixing/Desktop/github_open/rocketmq-all-4.8.0-source-release/remoting/src/test/java/org/apache/rocketmq/remoting/protocol/RemotingSerializableTest.java
+/Users/yangweixing/Desktop/github_open/rocketmq-all-4.8.0-source-release/remoting/src/test/java/org/apache/rocketmq/remoting/TlsTest.java

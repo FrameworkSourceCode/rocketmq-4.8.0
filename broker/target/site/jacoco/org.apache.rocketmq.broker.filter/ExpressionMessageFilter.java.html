@@ -1,0 +1,163 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ExpressionMessageFilter.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">rocketmq-broker 4.8.0</a> &gt; <a href="index.source.html" class="el_package">org.apache.rocketmq.broker.filter</a> &gt; <span class="el_source">ExpressionMessageFilter.java</span></div><h1>ExpressionMessageFilter.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.rocketmq.broker.filter;
+
+import org.apache.rocketmq.common.constant.LoggerName;
+import org.apache.rocketmq.common.filter.ExpressionType;
+import org.apache.rocketmq.logging.InternalLogger;
+import org.apache.rocketmq.logging.InternalLoggerFactory;
+import org.apache.rocketmq.common.message.MessageDecoder;
+import org.apache.rocketmq.common.protocol.heartbeat.SubscriptionData;
+import org.apache.rocketmq.filter.util.BitsArray;
+import org.apache.rocketmq.filter.util.BloomFilter;
+import org.apache.rocketmq.store.ConsumeQueueExt;
+import org.apache.rocketmq.store.MessageFilter;
+
+import java.nio.ByteBuffer;
+import java.util.Map;
+
+public class ExpressionMessageFilter implements MessageFilter {
+
+<span class="fc" id="L36">    protected static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.FILTER_LOGGER_NAME);</span>
+
+    protected final SubscriptionData subscriptionData;
+    protected final ConsumerFilterData consumerFilterData;
+    protected final ConsumerFilterManager consumerFilterManager;
+    protected final boolean bloomDataValid;
+
+    public ExpressionMessageFilter(SubscriptionData subscriptionData, ConsumerFilterData consumerFilterData,
+<span class="fc" id="L44">        ConsumerFilterManager consumerFilterManager) {</span>
+<span class="fc" id="L45">        this.subscriptionData = subscriptionData;</span>
+<span class="fc" id="L46">        this.consumerFilterData = consumerFilterData;</span>
+<span class="fc" id="L47">        this.consumerFilterManager = consumerFilterManager;</span>
+<span class="fc bfc" id="L48" title="All 2 branches covered.">        if (consumerFilterData == null) {</span>
+<span class="fc" id="L49">            bloomDataValid = false;</span>
+<span class="fc" id="L50">            return;</span>
+        }
+<span class="fc" id="L52">        BloomFilter bloomFilter = this.consumerFilterManager.getBloomFilter();</span>
+<span class="pc bpc" id="L53" title="1 of 4 branches missed.">        if (bloomFilter != null &amp;&amp; bloomFilter.isValid(consumerFilterData.getBloomFilterData())) {</span>
+<span class="fc" id="L54">            bloomDataValid = true;</span>
+        } else {
+<span class="fc" id="L56">            bloomDataValid = false;</span>
+        }
+<span class="fc" id="L58">    }</span>
+
+    @Override
+    public boolean isMatchedByConsumeQueue(Long tagsCode, ConsumeQueueExt.CqExtUnit cqExtUnit) {
+<span class="pc bpc" id="L62" title="1 of 2 branches missed.">        if (null == subscriptionData) {</span>
+<span class="nc" id="L63">            return true;</span>
+        }
+
+<span class="pc bpc" id="L66" title="1 of 2 branches missed.">        if (subscriptionData.isClassFilterMode()) {</span>
+<span class="nc" id="L67">            return true;</span>
+        }
+
+        // by tags code.
+<span class="pc bpc" id="L71" title="1 of 2 branches missed.">        if (ExpressionType.isTagType(subscriptionData.getExpressionType())) {</span>
+
+<span class="nc bnc" id="L73" title="All 2 branches missed.">            if (tagsCode == null) {</span>
+<span class="nc" id="L74">                return true;</span>
+            }
+
+<span class="nc bnc" id="L77" title="All 2 branches missed.">            if (subscriptionData.getSubString().equals(SubscriptionData.SUB_ALL)) {</span>
+<span class="nc" id="L78">                return true;</span>
+            }
+
+<span class="nc" id="L81">            return subscriptionData.getCodeSet().contains(tagsCode.intValue());</span>
+        } else {
+            // no expression or no bloom
+<span class="pc bpc" id="L84" title="2 of 4 branches missed.">            if (consumerFilterData == null || consumerFilterData.getExpression() == null</span>
+<span class="pc bpc" id="L85" title="1 of 4 branches missed.">                || consumerFilterData.getCompiledExpression() == null || consumerFilterData.getBloomFilterData() == null) {</span>
+<span class="fc" id="L86">                return true;</span>
+            }
+
+            // message is before consumer
+<span class="pc bpc" id="L90" title="2 of 4 branches missed.">            if (cqExtUnit == null || !consumerFilterData.isMsgInLive(cqExtUnit.getMsgStoreTime())) {</span>
+<span class="nc" id="L91">                log.debug(&quot;Pull matched because not in live: {}, {}&quot;, consumerFilterData, cqExtUnit);</span>
+<span class="nc" id="L92">                return true;</span>
+            }
+
+<span class="fc" id="L95">            byte[] filterBitMap = cqExtUnit.getFilterBitMap();</span>
+<span class="fc" id="L96">            BloomFilter bloomFilter = this.consumerFilterManager.getBloomFilter();</span>
+<span class="pc bpc" id="L97" title="2 of 4 branches missed.">            if (filterBitMap == null || !this.bloomDataValid</span>
+<span class="pc bpc" id="L98" title="1 of 2 branches missed.">                || filterBitMap.length * Byte.SIZE != consumerFilterData.getBloomFilterData().getBitNum()) {</span>
+<span class="nc" id="L99">                return true;</span>
+            }
+
+<span class="fc" id="L102">            BitsArray bitsArray = null;</span>
+            try {
+<span class="fc" id="L104">                bitsArray = BitsArray.create(filterBitMap);</span>
+<span class="fc" id="L105">                boolean ret = bloomFilter.isHit(consumerFilterData.getBloomFilterData(), bitsArray);</span>
+<span class="fc" id="L106">                log.debug(&quot;Pull {} by bit map:{}, {}, {}&quot;, ret, consumerFilterData, bitsArray, cqExtUnit);</span>
+<span class="fc" id="L107">                return ret;</span>
+<span class="nc" id="L108">            } catch (Throwable e) {</span>
+<span class="nc" id="L109">                log.error(&quot;bloom filter error, sub=&quot; + subscriptionData</span>
+                    + &quot;, filter=&quot; + consumerFilterData + &quot;, bitMap=&quot; + bitsArray, e);
+            }
+        }
+
+<span class="nc" id="L114">        return true;</span>
+    }
+
+    @Override
+    public boolean isMatchedByCommitLog(ByteBuffer msgBuffer, Map&lt;String, String&gt; properties) {
+<span class="pc bpc" id="L119" title="1 of 2 branches missed.">        if (subscriptionData == null) {</span>
+<span class="nc" id="L120">            return true;</span>
+        }
+
+<span class="pc bpc" id="L123" title="1 of 2 branches missed.">        if (subscriptionData.isClassFilterMode()) {</span>
+<span class="nc" id="L124">            return true;</span>
+        }
+
+<span class="pc bpc" id="L127" title="1 of 2 branches missed.">        if (ExpressionType.isTagType(subscriptionData.getExpressionType())) {</span>
+<span class="nc" id="L128">            return true;</span>
+        }
+
+<span class="fc" id="L131">        ConsumerFilterData realFilterData = this.consumerFilterData;</span>
+<span class="fc" id="L132">        Map&lt;String, String&gt; tempProperties = properties;</span>
+
+        // no expression
+<span class="pc bpc" id="L135" title="2 of 4 branches missed.">        if (realFilterData == null || realFilterData.getExpression() == null</span>
+<span class="pc bpc" id="L136" title="1 of 2 branches missed.">            || realFilterData.getCompiledExpression() == null) {</span>
+<span class="nc" id="L137">            return true;</span>
+        }
+
+<span class="pc bpc" id="L140" title="2 of 4 branches missed.">        if (tempProperties == null &amp;&amp; msgBuffer != null) {</span>
+<span class="fc" id="L141">            tempProperties = MessageDecoder.decodeProperties(msgBuffer);</span>
+        }
+
+<span class="fc" id="L144">        Object ret = null;</span>
+        try {
+<span class="fc" id="L146">            MessageEvaluationContext context = new MessageEvaluationContext(tempProperties);</span>
+
+<span class="fc" id="L148">            ret = realFilterData.getCompiledExpression().evaluate(context);</span>
+<span class="nc" id="L149">        } catch (Throwable e) {</span>
+<span class="nc" id="L150">            log.error(&quot;Message Filter error, &quot; + realFilterData + &quot;, &quot; + tempProperties, e);</span>
+<span class="fc" id="L151">        }</span>
+
+<span class="fc" id="L153">        log.debug(&quot;Pull eval result: {}, {}, {}&quot;, ret, realFilterData, tempProperties);</span>
+
+<span class="pc bpc" id="L155" title="2 of 4 branches missed.">        if (ret == null || !(ret instanceof Boolean)) {</span>
+<span class="nc" id="L156">            return false;</span>
+        }
+
+<span class="fc" id="L159">        return (Boolean) ret;</span>
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.5.201910111838</span></div></body></html>

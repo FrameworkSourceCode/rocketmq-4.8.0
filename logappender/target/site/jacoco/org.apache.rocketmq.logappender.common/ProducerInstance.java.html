@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ProducerInstance.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">rocketmq-logappender 4.8.0</a> &gt; <a href="index.source.html" class="el_package">org.apache.rocketmq.logappender.common</a> &gt; <span class="el_source">ProducerInstance.java</span></div><h1>ProducerInstance.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.rocketmq.logappender.common;
+
+import org.apache.commons.lang3.StringUtils;
+import org.apache.rocketmq.client.exception.MQClientException;
+import org.apache.rocketmq.client.producer.DefaultMQProducer;
+import org.apache.rocketmq.client.producer.MQProducer;
+
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+
+/**
+ * Common Producer component
+ */
+<span class="fc" id="L31">public class ProducerInstance {</span>
+
+    public static final String APPENDER_TYPE = &quot;APPENDER_TYPE&quot;;
+
+    public static final String LOG4J_APPENDER = &quot;LOG4J_APPENDER&quot;;
+
+    public static final String LOG4J2_APPENDER = &quot;LOG4J2_APPENDER&quot;;
+
+    public static final String LOGBACK_APPENDER = &quot;LOGBACK_APPENDER&quot;;
+
+    public static final String DEFAULT_GROUP = &quot;rocketmq_appender&quot;;
+
+<span class="fc" id="L43">    private ConcurrentHashMap&lt;String, MQProducer&gt; producerMap = new ConcurrentHashMap&lt;String, MQProducer&gt;();</span>
+
+<span class="fc" id="L45">    private static ProducerInstance instance = new ProducerInstance();</span>
+
+    public static ProducerInstance getProducerInstance() {
+<span class="fc" id="L48">        return instance;</span>
+    }
+
+    private String genKey(String nameServerAddress, String group) {
+<span class="nc" id="L52">        return nameServerAddress + &quot;_&quot; + group;</span>
+    }
+
+    public MQProducer getInstance(String nameServerAddress, String group) throws MQClientException {
+<span class="nc bnc" id="L56" title="All 2 branches missed.">        if (StringUtils.isBlank(group)) {</span>
+<span class="nc" id="L57">            group = DEFAULT_GROUP;</span>
+        }
+
+<span class="nc" id="L60">        String genKey = genKey(nameServerAddress, group);</span>
+<span class="nc" id="L61">        MQProducer p = getProducerInstance().producerMap.get(genKey);</span>
+<span class="nc bnc" id="L62" title="All 2 branches missed.">        if (p != null) {</span>
+<span class="nc" id="L63">            return p;</span>
+        }
+
+<span class="nc" id="L66">        DefaultMQProducer defaultMQProducer = new DefaultMQProducer(group);</span>
+<span class="nc" id="L67">        defaultMQProducer.setNamesrvAddr(nameServerAddress);</span>
+<span class="nc" id="L68">        MQProducer beforeProducer = null;</span>
+<span class="nc" id="L69">        beforeProducer = getProducerInstance().producerMap.putIfAbsent(genKey, defaultMQProducer);</span>
+<span class="nc bnc" id="L70" title="All 2 branches missed.">        if (beforeProducer != null) {</span>
+<span class="nc" id="L71">            return beforeProducer;</span>
+        }
+<span class="nc" id="L73">        defaultMQProducer.start();</span>
+<span class="nc" id="L74">        return defaultMQProducer;</span>
+    }
+
+    public void removeAndClose(String nameServerAddress, String group) {
+<span class="nc bnc" id="L78" title="All 2 branches missed.">        if (group == null) {</span>
+<span class="nc" id="L79">            group = DEFAULT_GROUP;</span>
+        }
+<span class="nc" id="L81">        String genKey = genKey(nameServerAddress, group);</span>
+<span class="nc" id="L82">        MQProducer producer = getProducerInstance().producerMap.remove(genKey);</span>
+
+<span class="nc bnc" id="L84" title="All 2 branches missed.">        if (producer != null) {</span>
+<span class="nc" id="L85">            producer.shutdown();</span>
+        }
+<span class="nc" id="L87">    }</span>
+
+    public void closeAll() {
+<span class="nc" id="L90">        Set&lt;Map.Entry&lt;String, MQProducer&gt;&gt; entries = getProducerInstance().producerMap.entrySet();</span>
+<span class="nc bnc" id="L91" title="All 2 branches missed.">        for (Map.Entry&lt;String, MQProducer&gt; entry : entries) {</span>
+<span class="nc" id="L92">            getProducerInstance().producerMap.remove(entry.getKey());</span>
+<span class="nc" id="L93">            entry.getValue().shutdown();</span>
+<span class="nc" id="L94">        }</span>
+<span class="nc" id="L95">    }</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.5.201910111838</span></div></body></html>

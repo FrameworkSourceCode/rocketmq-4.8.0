@@ -1,0 +1,156 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ConsumerManageProcessor.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">rocketmq-broker 4.8.0</a> &gt; <a href="index.source.html" class="el_package">org.apache.rocketmq.broker.processor</a> &gt; <span class="el_source">ConsumerManageProcessor.java</span></div><h1>ConsumerManageProcessor.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.rocketmq.broker.processor;
+
+import io.netty.channel.ChannelHandlerContext;
+import java.util.List;
+import org.apache.rocketmq.broker.BrokerController;
+import org.apache.rocketmq.broker.client.ConsumerGroupInfo;
+import org.apache.rocketmq.common.constant.LoggerName;
+import org.apache.rocketmq.logging.InternalLogger;
+import org.apache.rocketmq.common.protocol.RequestCode;
+import org.apache.rocketmq.common.protocol.ResponseCode;
+import org.apache.rocketmq.common.protocol.header.GetConsumerListByGroupRequestHeader;
+import org.apache.rocketmq.common.protocol.header.GetConsumerListByGroupResponseBody;
+import org.apache.rocketmq.common.protocol.header.GetConsumerListByGroupResponseHeader;
+import org.apache.rocketmq.common.protocol.header.QueryConsumerOffsetRequestHeader;
+import org.apache.rocketmq.common.protocol.header.QueryConsumerOffsetResponseHeader;
+import org.apache.rocketmq.common.protocol.header.UpdateConsumerOffsetRequestHeader;
+import org.apache.rocketmq.common.protocol.header.UpdateConsumerOffsetResponseHeader;
+import org.apache.rocketmq.logging.InternalLoggerFactory;
+import org.apache.rocketmq.remoting.common.RemotingHelper;
+import org.apache.rocketmq.remoting.exception.RemotingCommandException;
+import org.apache.rocketmq.remoting.netty.AsyncNettyRequestProcessor;
+import org.apache.rocketmq.remoting.netty.NettyRequestProcessor;
+import org.apache.rocketmq.remoting.protocol.RemotingCommand;
+
+public class ConsumerManageProcessor extends AsyncNettyRequestProcessor implements NettyRequestProcessor {
+<span class="fc" id="L42">    private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.BROKER_LOGGER_NAME);</span>
+
+    private final BrokerController brokerController;
+
+<span class="fc" id="L46">    public ConsumerManageProcessor(final BrokerController brokerController) {</span>
+<span class="fc" id="L47">        this.brokerController = brokerController;</span>
+<span class="fc" id="L48">    }</span>
+
+    @Override
+    public RemotingCommand processRequest(ChannelHandlerContext ctx, RemotingCommand request)
+        throws RemotingCommandException {
+<span class="nc bnc" id="L53" title="All 4 branches missed.">        switch (request.getCode()) {</span>
+            case RequestCode.GET_CONSUMER_LIST_BY_GROUP:
+<span class="nc" id="L55">                return this.getConsumerListByGroup(ctx, request);</span>
+            case RequestCode.UPDATE_CONSUMER_OFFSET:
+<span class="nc" id="L57">                return this.updateConsumerOffset(ctx, request);</span>
+            case RequestCode.QUERY_CONSUMER_OFFSET:
+<span class="nc" id="L59">                return this.queryConsumerOffset(ctx, request);</span>
+            default:
+                break;
+        }
+<span class="nc" id="L63">        return null;</span>
+    }
+
+    @Override
+    public boolean rejectRequest() {
+<span class="nc" id="L68">        return false;</span>
+    }
+
+    public RemotingCommand getConsumerListByGroup(ChannelHandlerContext ctx, RemotingCommand request)
+        throws RemotingCommandException {
+<span class="nc" id="L73">        final RemotingCommand response =</span>
+<span class="nc" id="L74">            RemotingCommand.createResponseCommand(GetConsumerListByGroupResponseHeader.class);</span>
+<span class="nc" id="L75">        final GetConsumerListByGroupRequestHeader requestHeader =</span>
+            (GetConsumerListByGroupRequestHeader) request
+<span class="nc" id="L77">                .decodeCommandCustomHeader(GetConsumerListByGroupRequestHeader.class);</span>
+
+<span class="nc" id="L79">        ConsumerGroupInfo consumerGroupInfo =</span>
+<span class="nc" id="L80">            this.brokerController.getConsumerManager().getConsumerGroupInfo(</span>
+<span class="nc" id="L81">                requestHeader.getConsumerGroup());</span>
+<span class="nc bnc" id="L82" title="All 2 branches missed.">        if (consumerGroupInfo != null) {</span>
+<span class="nc" id="L83">            List&lt;String&gt; clientIds = consumerGroupInfo.getAllClientId();</span>
+<span class="nc bnc" id="L84" title="All 2 branches missed.">            if (!clientIds.isEmpty()) {</span>
+<span class="nc" id="L85">                GetConsumerListByGroupResponseBody body = new GetConsumerListByGroupResponseBody();</span>
+<span class="nc" id="L86">                body.setConsumerIdList(clientIds);</span>
+<span class="nc" id="L87">                response.setBody(body.encode());</span>
+<span class="nc" id="L88">                response.setCode(ResponseCode.SUCCESS);</span>
+<span class="nc" id="L89">                response.setRemark(null);</span>
+<span class="nc" id="L90">                return response;</span>
+            } else {
+<span class="nc" id="L92">                log.warn(&quot;getAllClientId failed, {} {}&quot;, requestHeader.getConsumerGroup(),</span>
+<span class="nc" id="L93">                    RemotingHelper.parseChannelRemoteAddr(ctx.channel()));</span>
+            }
+<span class="nc" id="L95">        } else {</span>
+<span class="nc" id="L96">            log.warn(&quot;getConsumerGroupInfo failed, {} {}&quot;, requestHeader.getConsumerGroup(),</span>
+<span class="nc" id="L97">                RemotingHelper.parseChannelRemoteAddr(ctx.channel()));</span>
+        }
+
+<span class="nc" id="L100">        response.setCode(ResponseCode.SYSTEM_ERROR);</span>
+<span class="nc" id="L101">        response.setRemark(&quot;no consumer for this group, &quot; + requestHeader.getConsumerGroup());</span>
+<span class="nc" id="L102">        return response;</span>
+    }
+
+    private RemotingCommand updateConsumerOffset(ChannelHandlerContext ctx, RemotingCommand request)
+        throws RemotingCommandException {
+<span class="nc" id="L107">        final RemotingCommand response =</span>
+<span class="nc" id="L108">            RemotingCommand.createResponseCommand(UpdateConsumerOffsetResponseHeader.class);</span>
+<span class="nc" id="L109">        final UpdateConsumerOffsetRequestHeader requestHeader =</span>
+            (UpdateConsumerOffsetRequestHeader) request
+<span class="nc" id="L111">                .decodeCommandCustomHeader(UpdateConsumerOffsetRequestHeader.class);</span>
+<span class="nc" id="L112">        this.brokerController.getConsumerOffsetManager().commitOffset(RemotingHelper.parseChannelRemoteAddr(ctx.channel()), requestHeader.getConsumerGroup(),</span>
+<span class="nc" id="L113">            requestHeader.getTopic(), requestHeader.getQueueId(), requestHeader.getCommitOffset());</span>
+<span class="nc" id="L114">        response.setCode(ResponseCode.SUCCESS);</span>
+<span class="nc" id="L115">        response.setRemark(null);</span>
+<span class="nc" id="L116">        return response;</span>
+    }
+
+    private RemotingCommand queryConsumerOffset(ChannelHandlerContext ctx, RemotingCommand request)
+        throws RemotingCommandException {
+<span class="nc" id="L121">        final RemotingCommand response =</span>
+<span class="nc" id="L122">            RemotingCommand.createResponseCommand(QueryConsumerOffsetResponseHeader.class);</span>
+<span class="nc" id="L123">        final QueryConsumerOffsetResponseHeader responseHeader =</span>
+<span class="nc" id="L124">            (QueryConsumerOffsetResponseHeader) response.readCustomHeader();</span>
+<span class="nc" id="L125">        final QueryConsumerOffsetRequestHeader requestHeader =</span>
+            (QueryConsumerOffsetRequestHeader) request
+<span class="nc" id="L127">                .decodeCommandCustomHeader(QueryConsumerOffsetRequestHeader.class);</span>
+
+<span class="nc" id="L129">        long offset =</span>
+<span class="nc" id="L130">            this.brokerController.getConsumerOffsetManager().queryOffset(</span>
+<span class="nc" id="L131">                requestHeader.getConsumerGroup(), requestHeader.getTopic(), requestHeader.getQueueId());</span>
+
+<span class="nc bnc" id="L133" title="All 2 branches missed.">        if (offset &gt;= 0) {</span>
+<span class="nc" id="L134">            responseHeader.setOffset(offset);</span>
+<span class="nc" id="L135">            response.setCode(ResponseCode.SUCCESS);</span>
+<span class="nc" id="L136">            response.setRemark(null);</span>
+        } else {
+<span class="nc" id="L138">            long minOffset =</span>
+<span class="nc" id="L139">                this.brokerController.getMessageStore().getMinOffsetInQueue(requestHeader.getTopic(),</span>
+<span class="nc" id="L140">                    requestHeader.getQueueId());</span>
+<span class="nc bnc" id="L141" title="All 2 branches missed.">            if (minOffset &lt;= 0</span>
+<span class="nc bnc" id="L142" title="All 2 branches missed.">                &amp;&amp; !this.brokerController.getMessageStore().checkInDiskByConsumeOffset(</span>
+<span class="nc" id="L143">                requestHeader.getTopic(), requestHeader.getQueueId(), 0)) {</span>
+<span class="nc" id="L144">                responseHeader.setOffset(0L);</span>
+<span class="nc" id="L145">                response.setCode(ResponseCode.SUCCESS);</span>
+<span class="nc" id="L146">                response.setRemark(null);</span>
+            } else {
+<span class="nc" id="L148">                response.setCode(ResponseCode.QUERY_NOT_FOUND);</span>
+<span class="nc" id="L149">                response.setRemark(&quot;Not found, V3_0_6_SNAPSHOT maybe this group consumer boot first&quot;);</span>
+            }
+        }
+
+<span class="nc" id="L153">        return response;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.5.201910111838</span></div></body></html>

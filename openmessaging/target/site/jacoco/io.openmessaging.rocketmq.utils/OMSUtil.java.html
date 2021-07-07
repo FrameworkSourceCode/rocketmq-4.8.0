@@ -1,0 +1,181 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>OMSUtil.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">rocketmq-openmessaging 4.8.0</a> &gt; <a href="index.source.html" class="el_package">io.openmessaging.rocketmq.utils</a> &gt; <span class="el_source">OMSUtil.java</span></div><h1>OMSUtil.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package io.openmessaging.rocketmq.utils;
+
+import io.openmessaging.BytesMessage;
+import io.openmessaging.KeyValue;
+import io.openmessaging.Message.BuiltinKeys;
+import io.openmessaging.OMS;
+import io.openmessaging.producer.SendResult;
+import io.openmessaging.rocketmq.domain.BytesMessageImpl;
+import io.openmessaging.rocketmq.domain.RocketMQConstants;
+import io.openmessaging.rocketmq.domain.SendResultImpl;
+import java.lang.reflect.Field;
+import java.util.Iterator;
+import java.util.Map;
+import java.util.NoSuchElementException;
+import java.util.Set;
+import org.apache.rocketmq.client.producer.SendStatus;
+import org.apache.rocketmq.common.UtilAll;
+import org.apache.rocketmq.common.message.MessageAccessor;
+
+<span class="pc bpc" id="L36" title="1 of 2 branches missed.">public class OMSUtil {</span>
+
+    /**
+     * Builds a OMS client instance name.
+     *
+     * @return a unique instance name
+     */
+    public static String buildInstanceName() {
+<span class="fc" id="L44">        return Integer.toString(UtilAll.getPid()) + &quot;%OpenMessaging&quot; + &quot;%&quot; + System.nanoTime();</span>
+    }
+
+    public static org.apache.rocketmq.common.message.Message msgConvert(BytesMessage omsMessage) {
+<span class="fc" id="L48">        org.apache.rocketmq.common.message.Message rmqMessage = new org.apache.rocketmq.common.message.Message();</span>
+<span class="fc" id="L49">        rmqMessage.setBody(omsMessage.getBody(byte[].class));</span>
+
+<span class="fc" id="L51">        KeyValue sysHeaders = omsMessage.sysHeaders();</span>
+<span class="fc" id="L52">        KeyValue userHeaders = omsMessage.userHeaders();</span>
+
+        //All destinations in RocketMQ use Topic
+<span class="fc" id="L55">        rmqMessage.setTopic(sysHeaders.getString(BuiltinKeys.DESTINATION));</span>
+
+<span class="pc bpc" id="L57" title="1 of 2 branches missed.">        if (sysHeaders.containsKey(BuiltinKeys.START_TIME)) {</span>
+<span class="nc" id="L58">            long deliverTime = sysHeaders.getLong(BuiltinKeys.START_TIME, 0);</span>
+<span class="nc bnc" id="L59" title="All 2 branches missed.">            if (deliverTime &gt; 0) {</span>
+<span class="nc" id="L60">                rmqMessage.putUserProperty(RocketMQConstants.START_DELIVER_TIME, String.valueOf(deliverTime));</span>
+            }
+        }
+
+<span class="pc bpc" id="L64" title="1 of 2 branches missed.">        for (String key : userHeaders.keySet()) {</span>
+<span class="nc" id="L65">            MessageAccessor.putProperty(rmqMessage, key, userHeaders.getString(key));</span>
+<span class="nc" id="L66">        }</span>
+
+        //System headers has a high priority
+<span class="fc bfc" id="L69" title="All 2 branches covered.">        for (String key : sysHeaders.keySet()) {</span>
+<span class="fc" id="L70">            MessageAccessor.putProperty(rmqMessage, key, sysHeaders.getString(key));</span>
+<span class="fc" id="L71">        }</span>
+
+<span class="fc" id="L73">        return rmqMessage;</span>
+    }
+
+    public static BytesMessage msgConvert(org.apache.rocketmq.common.message.MessageExt rmqMsg) {
+<span class="fc" id="L77">        BytesMessage omsMsg = new BytesMessageImpl();</span>
+<span class="fc" id="L78">        omsMsg.setBody(rmqMsg.getBody());</span>
+
+<span class="fc" id="L80">        KeyValue headers = omsMsg.sysHeaders();</span>
+<span class="fc" id="L81">        KeyValue properties = omsMsg.userHeaders();</span>
+
+<span class="fc" id="L83">        final Set&lt;Map.Entry&lt;String, String&gt;&gt; entries = rmqMsg.getProperties().entrySet();</span>
+
+<span class="fc bfc" id="L85" title="All 2 branches covered.">        for (final Map.Entry&lt;String, String&gt; entry : entries) {</span>
+<span class="pc bpc" id="L86" title="1 of 2 branches missed.">            if (isOMSHeader(entry.getKey())) {</span>
+<span class="nc" id="L87">                headers.put(entry.getKey(), entry.getValue());</span>
+            } else {
+<span class="fc" id="L89">                properties.put(entry.getKey(), entry.getValue());</span>
+            }
+<span class="fc" id="L91">        }</span>
+
+<span class="fc" id="L93">        omsMsg.putSysHeaders(BuiltinKeys.MESSAGE_ID, rmqMsg.getMsgId());</span>
+
+<span class="fc" id="L95">        omsMsg.putSysHeaders(BuiltinKeys.DESTINATION, rmqMsg.getTopic());</span>
+
+<span class="fc" id="L97">        omsMsg.putSysHeaders(BuiltinKeys.SEARCH_KEYS, rmqMsg.getKeys());</span>
+<span class="fc" id="L98">        omsMsg.putSysHeaders(BuiltinKeys.BORN_HOST, String.valueOf(rmqMsg.getBornHost()));</span>
+<span class="fc" id="L99">        omsMsg.putSysHeaders(BuiltinKeys.BORN_TIMESTAMP, rmqMsg.getBornTimestamp());</span>
+<span class="fc" id="L100">        omsMsg.putSysHeaders(BuiltinKeys.STORE_HOST, String.valueOf(rmqMsg.getStoreHost()));</span>
+<span class="fc" id="L101">        omsMsg.putSysHeaders(BuiltinKeys.STORE_TIMESTAMP, rmqMsg.getStoreTimestamp());</span>
+<span class="fc" id="L102">        return omsMsg;</span>
+    }
+
+    public static boolean isOMSHeader(String value) {
+<span class="fc bfc" id="L106" title="All 2 branches covered.">        for (Field field : BuiltinKeys.class.getDeclaredFields()) {</span>
+            try {
+<span class="pc bpc" id="L108" title="1 of 2 branches missed.">                if (field.get(BuiltinKeys.class).equals(value)) {</span>
+<span class="nc" id="L109">                    return true;</span>
+                }
+<span class="nc" id="L111">            } catch (IllegalAccessException e) {</span>
+<span class="nc" id="L112">                return false;</span>
+<span class="fc" id="L113">            }</span>
+        }
+<span class="fc" id="L115">        return false;</span>
+    }
+
+    /**
+     * Convert a RocketMQ SEND_OK SendResult instance to a OMS SendResult.
+     */
+    public static SendResult sendResultConvert(org.apache.rocketmq.client.producer.SendResult rmqResult) {
+<span class="pc bpc" id="L122" title="2 of 4 branches missed.">        assert rmqResult.getSendStatus().equals(SendStatus.SEND_OK);</span>
+<span class="fc" id="L123">        return new SendResultImpl(rmqResult.getMsgId(), OMS.newKeyValue());</span>
+    }
+
+    public static KeyValue buildKeyValue(KeyValue... keyValues) {
+<span class="fc" id="L127">        KeyValue keyValue = OMS.newKeyValue();</span>
+<span class="fc bfc" id="L128" title="All 2 branches covered.">        for (KeyValue properties : keyValues) {</span>
+<span class="fc bfc" id="L129" title="All 2 branches covered.">            for (String key : properties.keySet()) {</span>
+<span class="fc" id="L130">                keyValue.put(key, properties.getString(key));</span>
+<span class="fc" id="L131">            }</span>
+        }
+<span class="fc" id="L133">        return keyValue;</span>
+    }
+
+    /**
+     * Returns an iterator that cycles indefinitely over the elements of {@code Iterable}.
+     */
+    public static &lt;T&gt; Iterator&lt;T&gt; cycle(final Iterable&lt;T&gt; iterable) {
+<span class="nc" id="L140">        return new Iterator&lt;T&gt;() {</span>
+<span class="nc" id="L141">            Iterator&lt;T&gt; iterator = new Iterator&lt;T&gt;() {</span>
+                @Override
+                public synchronized boolean hasNext() {
+<span class="nc" id="L144">                    return false;</span>
+                }
+
+                @Override
+                public synchronized T next() {
+<span class="nc" id="L149">                    throw new NoSuchElementException();</span>
+                }
+
+                @Override
+                public synchronized void remove() {
+                    //Ignore
+<span class="nc" id="L155">                }</span>
+            };
+
+            @Override
+            public synchronized boolean hasNext() {
+<span class="nc bnc" id="L160" title="All 4 branches missed.">                return iterator.hasNext() || iterable.iterator().hasNext();</span>
+            }
+
+            @Override
+            public synchronized T next() {
+<span class="nc bnc" id="L165" title="All 2 branches missed.">                if (!iterator.hasNext()) {</span>
+<span class="nc" id="L166">                    iterator = iterable.iterator();</span>
+<span class="nc bnc" id="L167" title="All 2 branches missed.">                    if (!iterator.hasNext()) {</span>
+<span class="nc" id="L168">                        throw new NoSuchElementException();</span>
+                    }
+                }
+<span class="nc" id="L171">                return iterator.next();</span>
+            }
+
+            @Override
+            public synchronized void remove() {
+<span class="nc" id="L176">                iterator.remove();</span>
+<span class="nc" id="L177">            }</span>
+        };
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.5.201910111838</span></div></body></html>

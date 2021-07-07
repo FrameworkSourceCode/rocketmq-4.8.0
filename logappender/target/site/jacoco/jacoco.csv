@@ -1,0 +1,6 @@
+GROUP,PACKAGE,CLASS,INSTRUCTION_MISSED,INSTRUCTION_COVERED,BRANCH_MISSED,BRANCH_COVERED,LINE_MISSED,LINE_COVERED,COMPLEXITY_MISSED,COMPLEXITY_COVERED,METHOD_MISSED,METHOD_COVERED
+rocketmq-logappender 4.8.0,org.apache.rocketmq.logappender.log4j,RocketmqLog4jAppender,116,111,7,7,21,36,12,10,5,10
+rocketmq-logappender 4.8.0,org.apache.rocketmq.logappender.log4j2,RocketmqLog4j2Appender,90,86,7,1,16,23,4,4,0,4
+rocketmq-logappender 4.8.0,org.apache.rocketmq.logappender.log4j2,RocketmqLog4j2Appender.Builder,40,29,0,0,16,5,8,2,8,2
+rocketmq-logappender 4.8.0,org.apache.rocketmq.logappender.logback,RocketmqLogbackAppender,137,92,9,7,25,31,12,9,4,9
+rocketmq-logappender 4.8.0,org.apache.rocketmq.logappender.common,ProducerInstance,102,15,12,0,28,4,10,3,4,3

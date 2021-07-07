@@ -1,0 +1,186 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>PullConsumerImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">rocketmq-openmessaging 4.8.0</a> &gt; <a href="index.source.html" class="el_package">io.openmessaging.rocketmq.consumer</a> &gt; <span class="el_source">PullConsumerImpl.java</span></div><h1>PullConsumerImpl.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package io.openmessaging.rocketmq.consumer;
+
+import io.openmessaging.KeyValue;
+import io.openmessaging.Message;
+import io.openmessaging.OMSBuiltinKeys;
+import io.openmessaging.consumer.PullConsumer;
+import io.openmessaging.exception.OMSRuntimeException;
+import io.openmessaging.rocketmq.config.ClientConfig;
+import io.openmessaging.rocketmq.domain.ConsumeRequest;
+import io.openmessaging.rocketmq.utils.BeanUtils;
+import io.openmessaging.rocketmq.utils.OMSUtil;
+import org.apache.rocketmq.client.consumer.DefaultMQPullConsumer;
+import org.apache.rocketmq.client.consumer.MQPullConsumer;
+import org.apache.rocketmq.client.consumer.MQPullConsumerScheduleService;
+import org.apache.rocketmq.client.consumer.PullResult;
+import org.apache.rocketmq.client.consumer.PullTaskCallback;
+import org.apache.rocketmq.client.consumer.PullTaskContext;
+import org.apache.rocketmq.client.exception.MQClientException;
+import org.apache.rocketmq.client.impl.consumer.ProcessQueue;
+import org.apache.rocketmq.client.log.ClientLogger;
+import org.apache.rocketmq.common.message.MessageExt;
+import org.apache.rocketmq.common.message.MessageQueue;
+import org.apache.rocketmq.logging.InternalLogger;
+import org.apache.rocketmq.remoting.protocol.LanguageCode;
+
+public class PullConsumerImpl implements PullConsumer {
+    private final DefaultMQPullConsumer rocketmqPullConsumer;
+    private final KeyValue properties;
+<span class="fc" id="L45">    private boolean started = false;</span>
+    private final MQPullConsumerScheduleService pullConsumerScheduleService;
+    private final LocalMessageCache localMessageCache;
+    private final ClientConfig clientConfig;
+
+<span class="fc" id="L50">    private final static InternalLogger log = ClientLogger.getLog();</span>
+
+<span class="fc" id="L52">    public PullConsumerImpl(final KeyValue properties) {</span>
+<span class="fc" id="L53">        this.properties = properties;</span>
+<span class="fc" id="L54">        this.clientConfig = BeanUtils.populate(properties, ClientConfig.class);</span>
+
+<span class="fc" id="L56">        String consumerGroup = clientConfig.getConsumerId();</span>
+<span class="pc bpc" id="L57" title="2 of 4 branches missed.">        if (null == consumerGroup || consumerGroup.isEmpty()) {</span>
+<span class="nc" id="L58">            throw new OMSRuntimeException(&quot;-1&quot;, &quot;Consumer Group is necessary for RocketMQ, please set it.&quot;);</span>
+        }
+<span class="fc" id="L60">        pullConsumerScheduleService = new MQPullConsumerScheduleService(consumerGroup);</span>
+
+<span class="fc" id="L62">        this.rocketmqPullConsumer = pullConsumerScheduleService.getDefaultMQPullConsumer();</span>
+
+<span class="pc bpc" id="L64" title="1 of 2 branches missed.">        if (&quot;true&quot;.equalsIgnoreCase(System.getenv(&quot;OMS_RMQ_DIRECT_NAME_SRV&quot;))) {</span>
+<span class="nc" id="L65">            String accessPoints = clientConfig.getAccessPoints();</span>
+<span class="nc bnc" id="L66" title="All 4 branches missed.">            if (accessPoints == null || accessPoints.isEmpty()) {</span>
+<span class="nc" id="L67">                throw new OMSRuntimeException(&quot;-1&quot;, &quot;OMS AccessPoints is null or empty.&quot;);</span>
+            }
+<span class="nc" id="L69">            this.rocketmqPullConsumer.setNamesrvAddr(accessPoints.replace(',', ';'));</span>
+        }
+
+<span class="fc" id="L72">        this.rocketmqPullConsumer.setConsumerGroup(consumerGroup);</span>
+
+<span class="fc" id="L74">        int maxReDeliveryTimes = clientConfig.getRmqMaxRedeliveryTimes();</span>
+<span class="fc" id="L75">        this.rocketmqPullConsumer.setMaxReconsumeTimes(maxReDeliveryTimes);</span>
+
+<span class="fc" id="L77">        String consumerId = OMSUtil.buildInstanceName();</span>
+<span class="fc" id="L78">        this.rocketmqPullConsumer.setInstanceName(consumerId);</span>
+<span class="fc" id="L79">        properties.put(OMSBuiltinKeys.CONSUMER_ID, consumerId);</span>
+
+<span class="fc" id="L81">        this.rocketmqPullConsumer.setLanguage(LanguageCode.OMS);</span>
+
+<span class="fc" id="L83">        this.localMessageCache = new LocalMessageCache(this.rocketmqPullConsumer, clientConfig);</span>
+<span class="fc" id="L84">    }</span>
+
+    @Override
+    public KeyValue attributes() {
+<span class="nc" id="L88">        return properties;</span>
+    }
+
+    @Override
+    public PullConsumer attachQueue(String queueName) {
+<span class="fc" id="L93">        registerPullTaskCallback(queueName);</span>
+<span class="fc" id="L94">        return this;</span>
+    }
+
+    @Override
+    public PullConsumer attachQueue(String queueName, KeyValue attributes) {
+<span class="nc" id="L99">        registerPullTaskCallback(queueName);</span>
+<span class="nc" id="L100">        return this;</span>
+    }
+
+    @Override
+    public PullConsumer detachQueue(String queueName) {
+<span class="nc" id="L105">        this.rocketmqPullConsumer.getRegisterTopics().remove(queueName);</span>
+<span class="nc" id="L106">        return this;</span>
+    }
+
+    @Override
+    public Message receive() {
+<span class="fc" id="L111">        MessageExt rmqMsg = localMessageCache.poll();</span>
+<span class="fc bfc" id="L112" title="All 2 branches covered.">        return rmqMsg == null ? null : OMSUtil.msgConvert(rmqMsg);</span>
+    }
+
+    @Override
+    public Message receive(final KeyValue properties) {
+<span class="fc" id="L117">        MessageExt rmqMsg = localMessageCache.poll(properties);</span>
+<span class="pc bpc" id="L118" title="1 of 2 branches missed.">        return rmqMsg == null ? null : OMSUtil.msgConvert(rmqMsg);</span>
+    }
+
+    @Override
+    public void ack(final String messageId) {
+<span class="nc" id="L123">        localMessageCache.ack(messageId);</span>
+<span class="nc" id="L124">    }</span>
+
+    @Override
+    public void ack(final String messageId, final KeyValue properties) {
+<span class="nc" id="L128">        localMessageCache.ack(messageId);</span>
+<span class="nc" id="L129">    }</span>
+
+    @Override
+    public synchronized void startup() {
+<span class="pc bpc" id="L133" title="1 of 2 branches missed.">        if (!started) {</span>
+            try {
+<span class="fc" id="L135">                this.pullConsumerScheduleService.start();</span>
+<span class="fc" id="L136">                this.localMessageCache.startup();</span>
+<span class="nc" id="L137">            } catch (MQClientException e) {</span>
+<span class="nc" id="L138">                throw new OMSRuntimeException(&quot;-1&quot;, e);</span>
+<span class="fc" id="L139">            }</span>
+        }
+<span class="fc" id="L141">        this.started = true;</span>
+<span class="fc" id="L142">    }</span>
+
+    private void registerPullTaskCallback(final String targetQueueName) {
+<span class="fc" id="L145">        this.pullConsumerScheduleService.registerPullTaskCallback(targetQueueName, new PullTaskCallback() {</span>
+            @Override
+            public void doPullTask(final MessageQueue mq, final PullTaskContext context) {
+<span class="nc" id="L148">                MQPullConsumer consumer = context.getPullConsumer();</span>
+                try {
+<span class="nc" id="L150">                    long offset = localMessageCache.nextPullOffset(mq);</span>
+
+<span class="nc" id="L152">                    PullResult pullResult = consumer.pull(mq, &quot;*&quot;,</span>
+<span class="nc" id="L153">                        offset, localMessageCache.nextPullBatchNums());</span>
+<span class="nc" id="L154">                    ProcessQueue pq = rocketmqPullConsumer.getDefaultMQPullConsumerImpl().getRebalanceImpl()</span>
+<span class="nc" id="L155">                        .getProcessQueueTable().get(mq);</span>
+<span class="nc bnc" id="L156" title="All 2 branches missed.">                    switch (pullResult.getPullStatus()) {</span>
+                        case FOUND:
+<span class="nc bnc" id="L158" title="All 2 branches missed.">                            if (pq != null) {</span>
+<span class="nc" id="L159">                                pq.putMessage(pullResult.getMsgFoundList());</span>
+<span class="nc bnc" id="L160" title="All 2 branches missed.">                                for (final MessageExt messageExt : pullResult.getMsgFoundList()) {</span>
+<span class="nc" id="L161">                                    localMessageCache.submitConsumeRequest(new ConsumeRequest(messageExt, mq, pq));</span>
+<span class="nc" id="L162">                                }</span>
+                            }
+                            break;
+                        default:
+                            break;
+                    }
+<span class="nc" id="L168">                    localMessageCache.updatePullOffset(mq, pullResult.getNextBeginOffset());</span>
+<span class="nc" id="L169">                } catch (Exception e) {</span>
+<span class="nc" id="L170">                    log.error(&quot;An error occurred in pull message process.&quot;, e);</span>
+<span class="nc" id="L171">                }</span>
+<span class="nc" id="L172">            }</span>
+        });
+<span class="fc" id="L174">    }</span>
+
+    @Override
+    public synchronized void shutdown() {
+<span class="nc bnc" id="L178" title="All 2 branches missed.">        if (this.started) {</span>
+<span class="nc" id="L179">            this.localMessageCache.shutdown();</span>
+<span class="nc" id="L180">            this.pullConsumerScheduleService.shutdown();</span>
+<span class="nc" id="L181">            this.rocketmqPullConsumer.shutdown();</span>
+        }
+<span class="nc" id="L183">        this.started = false;</span>
+<span class="nc" id="L184">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.5.201910111838</span></div></body></html>

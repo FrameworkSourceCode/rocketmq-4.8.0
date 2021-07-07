@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AclSigner.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">rocketmq-acl 4.8.0</a> &gt; <a href="index.source.html" class="el_package">org.apache.rocketmq.acl.common</a> &gt; <span class="el_source">AclSigner.java</span></div><h1>AclSigner.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.rocketmq.acl.common;
+
+import java.nio.charset.Charset;
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
+import org.apache.commons.codec.binary.Base64;
+import org.apache.rocketmq.common.constant.LoggerName;
+import org.apache.rocketmq.logging.InternalLogger;
+import org.apache.rocketmq.logging.InternalLoggerFactory;
+
+<span class="nc" id="L27">public class AclSigner {</span>
+<span class="fc" id="L28">    public static final Charset DEFAULT_CHARSET = Charset.forName(&quot;UTF-8&quot;);</span>
+<span class="fc" id="L29">    public static final SigningAlgorithm DEFAULT_ALGORITHM = SigningAlgorithm.HmacSHA1;</span>
+<span class="fc" id="L30">    private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.ROCKETMQ_AUTHORIZE_LOGGER_NAME);</span>
+    private static final int CAL_SIGNATURE_FAILED = 10015;
+    private static final String CAL_SIGNATURE_FAILED_MSG = &quot;[%s:signature-failed] unable to calculate a request signature. error=%s&quot;;
+
+    public static String calSignature(String data, String key) throws AclException {
+<span class="fc" id="L35">        return calSignature(data, key, DEFAULT_ALGORITHM, DEFAULT_CHARSET);</span>
+    }
+
+    public static String calSignature(String data, String key, SigningAlgorithm algorithm,
+        Charset charset) throws AclException {
+<span class="fc" id="L40">        return signAndBase64Encode(data, key, algorithm, charset);</span>
+    }
+
+    private static String signAndBase64Encode(String data, String key, SigningAlgorithm algorithm, Charset charset)
+        throws AclException {
+        try {
+<span class="fc" id="L46">            byte[] signature = sign(data.getBytes(charset), key.getBytes(charset), algorithm);</span>
+<span class="fc" id="L47">            return new String(Base64.encodeBase64(signature), DEFAULT_CHARSET);</span>
+<span class="nc" id="L48">        } catch (Exception e) {</span>
+<span class="nc" id="L49">            String message = String.format(CAL_SIGNATURE_FAILED_MSG, CAL_SIGNATURE_FAILED, e.getMessage());</span>
+<span class="nc" id="L50">            log.error(message, e);</span>
+<span class="nc" id="L51">            throw new AclException(&quot;CAL_SIGNATURE_FAILED&quot;, CAL_SIGNATURE_FAILED, message, e);</span>
+        }
+    }
+
+    private static byte[] sign(byte[] data, byte[] key, SigningAlgorithm algorithm) throws AclException {
+        try {
+<span class="fc" id="L57">            Mac mac = Mac.getInstance(algorithm.toString());</span>
+<span class="fc" id="L58">            mac.init(new SecretKeySpec(key, algorithm.toString()));</span>
+<span class="fc" id="L59">            return mac.doFinal(data);</span>
+<span class="fc" id="L60">        } catch (Exception e) {</span>
+<span class="fc" id="L61">            String message = String.format(CAL_SIGNATURE_FAILED_MSG, CAL_SIGNATURE_FAILED, e.getMessage());</span>
+<span class="fc" id="L62">            log.error(message, e);</span>
+<span class="fc" id="L63">            throw new AclException(&quot;CAL_SIGNATURE_FAILED&quot;, CAL_SIGNATURE_FAILED, message, e);</span>
+        }
+    }
+
+    public static String calSignature(byte[] data, String key) throws AclException {
+<span class="fc" id="L68">        return calSignature(data, key, DEFAULT_ALGORITHM, DEFAULT_CHARSET);</span>
+    }
+
+    public static String calSignature(byte[] data, String key, SigningAlgorithm algorithm,
+        Charset charset) throws AclException {
+<span class="fc" id="L73">        return signAndBase64Encode(data, key, algorithm, charset);</span>
+    }
+
+    private static String signAndBase64Encode(byte[] data, String key, SigningAlgorithm algorithm, Charset charset)
+        throws AclException {
+        try {
+<span class="fc" id="L79">            byte[] signature = sign(data, key.getBytes(charset), algorithm);</span>
+<span class="fc" id="L80">            return new String(Base64.encodeBase64(signature), DEFAULT_CHARSET);</span>
+<span class="fc" id="L81">        } catch (Exception e) {</span>
+<span class="fc" id="L82">            String message = String.format(CAL_SIGNATURE_FAILED_MSG, CAL_SIGNATURE_FAILED, e.getMessage());</span>
+<span class="fc" id="L83">            log.error(message, e);</span>
+<span class="fc" id="L84">            throw new AclException(&quot;CAL_SIGNATURE_FAILED&quot;, CAL_SIGNATURE_FAILED, message, e);</span>
+        }
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.5.201910111838</span></div></body></html>

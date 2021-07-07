@@ -1,0 +1,186 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>BeanUtils.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">rocketmq-openmessaging 4.8.0</a> &gt; <a href="index.source.html" class="el_package">io.openmessaging.rocketmq.utils</a> &gt; <span class="el_source">BeanUtils.java</span></div><h1>BeanUtils.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package io.openmessaging.rocketmq.utils;
+
+import io.openmessaging.KeyValue;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Properties;
+import java.util.Set;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.rocketmq.client.log.ClientLogger;
+import org.apache.rocketmq.logging.InternalLogger;
+
+<span class="nc" id="L30">public final class BeanUtils {</span>
+<span class="fc" id="L31">    final static InternalLogger log = ClientLogger.getLog();</span>
+
+    /**
+     * Maps primitive {@code Class}es to their corresponding wrapper {@code Class}.
+     */
+<span class="fc" id="L36">    private static Map&lt;Class&lt;?&gt;, Class&lt;?&gt;&gt; primitiveWrapperMap = new HashMap&lt;Class&lt;?&gt;, Class&lt;?&gt;&gt;();</span>
+
+    static {
+<span class="fc" id="L39">        primitiveWrapperMap.put(Boolean.TYPE, Boolean.class);</span>
+<span class="fc" id="L40">        primitiveWrapperMap.put(Byte.TYPE, Byte.class);</span>
+<span class="fc" id="L41">        primitiveWrapperMap.put(Character.TYPE, Character.class);</span>
+<span class="fc" id="L42">        primitiveWrapperMap.put(Short.TYPE, Short.class);</span>
+<span class="fc" id="L43">        primitiveWrapperMap.put(Integer.TYPE, Integer.class);</span>
+<span class="fc" id="L44">        primitiveWrapperMap.put(Long.TYPE, Long.class);</span>
+<span class="fc" id="L45">        primitiveWrapperMap.put(Double.TYPE, Double.class);</span>
+<span class="fc" id="L46">        primitiveWrapperMap.put(Float.TYPE, Float.class);</span>
+<span class="fc" id="L47">        primitiveWrapperMap.put(Void.TYPE, Void.TYPE);</span>
+    }
+
+<span class="fc" id="L50">    private static Map&lt;Class&lt;?&gt;, Class&lt;?&gt;&gt; wrapperMap = new HashMap&lt;Class&lt;?&gt;, Class&lt;?&gt;&gt;();</span>
+
+    static {
+<span class="fc bfc" id="L53" title="All 2 branches covered.">        for (final Class&lt;?&gt; primitiveClass : primitiveWrapperMap.keySet()) {</span>
+<span class="fc" id="L54">            final Class&lt;?&gt; wrapperClass = primitiveWrapperMap.get(primitiveClass);</span>
+<span class="fc bfc" id="L55" title="All 2 branches covered.">            if (!primitiveClass.equals(wrapperClass)) {</span>
+<span class="fc" id="L56">                wrapperMap.put(wrapperClass, primitiveClass);</span>
+            }
+<span class="fc" id="L58">        }</span>
+<span class="fc" id="L59">        wrapperMap.put(String.class, String.class);</span>
+<span class="fc" id="L60">    }</span>
+
+    /**
+     * &lt;p&gt;Populate the JavaBeans properties of the specified bean, based on
+     * the specified name/value pairs.  This method uses Java reflection APIs
+     * to identify corresponding &quot;property setter&quot; method names, and deals
+     * with setter arguments of type &lt;Code&gt;String&lt;/Code&gt;, &lt;Code&gt;boolean&lt;/Code&gt;,
+     * &lt;Code&gt;int&lt;/Code&gt;, &lt;Code&gt;long&lt;/Code&gt;, &lt;Code&gt;float&lt;/Code&gt;, and
+     * &lt;Code&gt;double&lt;/Code&gt;.&lt;/p&gt;
+     *
+     * &lt;p&gt;The particular setter method to be called for each property is
+     * determined using the usual JavaBeans introspection mechanisms.  Thus,
+     * you may identify custom setter methods using a BeanInfo class that is
+     * associated with the class of the bean itself.  If no such BeanInfo
+     * class is available, the standard method name conversion (&quot;set&quot; plus
+     * the capitalized name of the property in question) is used.&lt;/p&gt;
+     *
+     * &lt;p&gt;&lt;strong&gt;NOTE&lt;/strong&gt;:  It is contrary to the JavaBeans Specification
+     * to have more than one setter method (with different argument
+     * signatures) for the same property.&lt;/p&gt;
+     *
+     * @param clazz JavaBean class whose properties are being populated
+     * @param properties Map keyed by property name, with the corresponding (String or String[]) value(s) to be set
+     * @param &lt;T&gt; Class type
+     * @return Class instance
+     */
+    public static &lt;T&gt; T populate(final Properties properties, final Class&lt;T&gt; clazz) {
+<span class="nc" id="L87">        T obj = null;</span>
+        try {
+<span class="nc" id="L89">            obj = clazz.newInstance();</span>
+<span class="nc" id="L90">            return populate(properties, obj);</span>
+<span class="nc" id="L91">        } catch (Throwable e) {</span>
+<span class="nc" id="L92">            log.warn(&quot;Error occurs !&quot;, e);</span>
+        }
+<span class="nc" id="L94">        return obj;</span>
+    }
+
+    public static &lt;T&gt; T populate(final KeyValue properties, final Class&lt;T&gt; clazz) {
+<span class="fc" id="L98">        T obj = null;</span>
+        try {
+<span class="fc" id="L100">            obj = clazz.newInstance();</span>
+<span class="fc" id="L101">            return populate(properties, obj);</span>
+<span class="nc" id="L102">        } catch (Throwable e) {</span>
+<span class="nc" id="L103">            log.warn(&quot;Error occurs !&quot;, e);</span>
+        }
+<span class="nc" id="L105">        return obj;</span>
+    }
+
+    public static Class&lt;?&gt; getMethodClass(Class&lt;?&gt; clazz, String methodName) {
+<span class="fc" id="L109">        Method[] methods = clazz.getMethods();</span>
+<span class="fc bfc" id="L110" title="All 2 branches covered.">        for (Method method : methods) {</span>
+<span class="fc bfc" id="L111" title="All 2 branches covered.">            if (method.getName().equalsIgnoreCase(methodName)) {</span>
+<span class="fc" id="L112">                return method.getParameterTypes()[0];</span>
+            }
+        }
+<span class="fc" id="L115">        return null;</span>
+    }
+
+    public static void setProperties(Class&lt;?&gt; clazz, Object obj, String methodName,
+        Object value) throws NoSuchMethodException, InvocationTargetException, IllegalAccessException {
+<span class="fc" id="L120">        Class&lt;?&gt; parameterClass = getMethodClass(clazz, methodName);</span>
+<span class="fc" id="L121">        Method setterMethod = clazz.getMethod(methodName, parameterClass);</span>
+<span class="pc bpc" id="L122" title="1 of 2 branches missed.">        if (parameterClass == Boolean.TYPE) {</span>
+<span class="nc" id="L123">            setterMethod.invoke(obj, Boolean.valueOf(value.toString()));</span>
+<span class="fc bfc" id="L124" title="All 2 branches covered.">        } else if (parameterClass == Integer.TYPE) {</span>
+<span class="fc" id="L125">            setterMethod.invoke(obj, Integer.valueOf(value.toString()));</span>
+<span class="fc bfc" id="L126" title="All 2 branches covered.">        } else if (parameterClass == Double.TYPE) {</span>
+<span class="fc" id="L127">            setterMethod.invoke(obj, Double.valueOf(value.toString()));</span>
+<span class="pc bpc" id="L128" title="1 of 2 branches missed.">        } else if (parameterClass == Float.TYPE) {</span>
+<span class="nc" id="L129">            setterMethod.invoke(obj, Float.valueOf(value.toString()));</span>
+<span class="fc bfc" id="L130" title="All 2 branches covered.">        } else if (parameterClass == Long.TYPE) {</span>
+<span class="fc" id="L131">            setterMethod.invoke(obj, Long.valueOf(value.toString()));</span>
+        } else
+<span class="fc" id="L133">            setterMethod.invoke(obj, value);</span>
+<span class="fc" id="L134">    }</span>
+
+    public static &lt;T&gt; T populate(final Properties properties, final T obj) {
+<span class="nc" id="L137">        Class&lt;?&gt; clazz = obj.getClass();</span>
+        try {
+
+<span class="nc" id="L140">            Set&lt;Map.Entry&lt;Object, Object&gt;&gt; entries = properties.entrySet();</span>
+<span class="nc bnc" id="L141" title="All 2 branches missed.">            for (Map.Entry&lt;Object, Object&gt; entry : entries) {</span>
+<span class="nc" id="L142">                String entryKey = entry.getKey().toString();</span>
+<span class="nc" id="L143">                String[] keyGroup = entryKey.split(&quot;\\.&quot;);</span>
+<span class="nc bnc" id="L144" title="All 2 branches missed.">                for (int i = 0; i &lt; keyGroup.length; i++) {</span>
+<span class="nc" id="L145">                    keyGroup[i] = keyGroup[i].toLowerCase();</span>
+<span class="nc" id="L146">                    keyGroup[i] = StringUtils.capitalize(keyGroup[i]);</span>
+                }
+<span class="nc" id="L148">                String beanFieldNameWithCapitalization = StringUtils.join(keyGroup);</span>
+                try {
+<span class="nc" id="L150">                    setProperties(clazz, obj, &quot;set&quot; + beanFieldNameWithCapitalization, entry.getValue());</span>
+<span class="nc" id="L151">                } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException ignored) {</span>
+                    //ignored...
+<span class="nc" id="L153">                }</span>
+<span class="nc" id="L154">            }</span>
+<span class="nc" id="L155">        } catch (RuntimeException e) {</span>
+<span class="nc" id="L156">            log.warn(&quot;Error occurs !&quot;, e);</span>
+<span class="nc" id="L157">        }</span>
+<span class="nc" id="L158">        return obj;</span>
+    }
+
+    public static &lt;T&gt; T populate(final KeyValue properties, final T obj) {
+<span class="fc" id="L162">        Class&lt;?&gt; clazz = obj.getClass();</span>
+        try {
+
+<span class="fc" id="L165">            final Set&lt;String&gt; keySet = properties.keySet();</span>
+<span class="fc bfc" id="L166" title="All 2 branches covered.">            for (String key : keySet) {</span>
+<span class="fc" id="L167">                String[] keyGroup = key.split(&quot;[\\._]&quot;);</span>
+<span class="fc bfc" id="L168" title="All 2 branches covered.">                for (int i = 0; i &lt; keyGroup.length; i++) {</span>
+<span class="fc" id="L169">                    keyGroup[i] = keyGroup[i].toLowerCase();</span>
+<span class="fc" id="L170">                    keyGroup[i] = StringUtils.capitalize(keyGroup[i]);</span>
+                }
+<span class="fc" id="L172">                String beanFieldNameWithCapitalization = StringUtils.join(keyGroup);</span>
+                try {
+<span class="fc" id="L174">                    setProperties(clazz, obj, &quot;set&quot; + beanFieldNameWithCapitalization, properties.getString(key));</span>
+<span class="fc" id="L175">                } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException ignored) {</span>
+                    //ignored...
+<span class="fc" id="L177">                }</span>
+<span class="fc" id="L178">            }</span>
+<span class="nc" id="L179">        } catch (RuntimeException e) {</span>
+<span class="nc" id="L180">            log.warn(&quot;Error occurs !&quot;, e);</span>
+<span class="fc" id="L181">        }</span>
+<span class="fc" id="L182">        return obj;</span>
+    }
+}
+
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.5.201910111838</span></div></body></html>
